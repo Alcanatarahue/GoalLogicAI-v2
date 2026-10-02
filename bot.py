@@ -1,5 +1,6 @@
 import os
 import math
+import asyncio
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -1716,15 +1717,15 @@ async def analyze_command(
 # MAIN
 # ============================================================
 
-def main():
+async def start_telegram_bot():
+    print("🔵 GoalLogic AI v3.3 Telegram startup beginning...", flush=True)
+
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError(
-            "TELEGRAM_BOT_TOKEN is missing."
+            "❌ TELEGRAM_BOT_TOKEN is missing."
         )
 
-    print(
-        f"GoalLogic AI v{VERSION} Telegram bot is starting."
-    )
+    print("🔵 Building Telegram application...", flush=True)
 
     application = (
         Application.builder()
@@ -1752,9 +1753,137 @@ def main():
         CommandHandler("analyze", analyze_command)
     )
 
-    application.run_polling(
-        drop_pending_updates=True
+    print("🔵 Telegram handlers loaded.", flush=True)
+
+    # --------------------------------------------------------
+    # INITIALIZE TELEGRAM CONNECTION
+    # --------------------------------------------------------
+
+    print("🔵 Connecting to Telegram...", flush=True)
+
+    await application.initialize()
+
+    try:
+        bot_info = await application.bot.get_me()
+
+        print(
+            f"✅ Telegram connection successful: "
+            f"@{bot_info.username}",
+            flush=True
+        )
+
+        print(
+            f"✅ Bot ID: {bot_info.id}",
+            flush=True
+        )
+
+        # Remove any webhook that could interfere with polling.
+        print(
+            "🔵 Removing any existing Telegram webhook...",
+            flush=True
+        )
+
+        await application.bot.delete_webhook(
+            drop_pending_updates=True
+        )
+
+        print(
+            "✅ Telegram webhook cleared.",
+            flush=True
+        )
+
+        # ----------------------------------------------------
+        # START APPLICATION
+        # ----------------------------------------------------
+
+        await application.start()
+
+        print(
+            "🔵 Starting Telegram polling...",
+            flush=True
+        )
+
+        await application.updater.start_polling(
+            drop_pending_updates=True
+        )
+
+        print(
+            "🟢 GoalLogic AI v3.3 Telegram polling started.",
+            flush=True
+        )
+
+        print(
+            "🟢 Bot is now listening for commands.",
+            flush=True
+        )
+
+        # Keep the process alive.
+        await asyncio.Event().wait()
+
+    except Exception as e:
+        print(
+            "❌ TELEGRAM STARTUP ERROR",
+            flush=True
+        )
+
+        print(
+            f"{type(e).__name__}: {e}",
+            flush=True
+        )
+
+        raise
+
+    finally:
+        print(
+            "🔴 Telegram application shutting down...",
+            flush=True
+        )
+
+        try:
+            await application.updater.stop()
+        except Exception:
+            pass
+
+        try:
+            await application.stop()
+        except Exception:
+            pass
+
+        try:
+            await application.shutdown()
+        except Exception:
+            pass
+
+
+def main():
+    print(
+        f"⚽ GoalLogic AI v{VERSION} Telegram bot is starting.",
+        flush=True
     )
+
+    try:
+        asyncio.run(
+            start_telegram_bot()
+        )
+
+    except KeyboardInterrupt:
+        print(
+            "🔴 GoalLogic AI stopped.",
+            flush=True
+        )
+
+    except Exception as e:
+        print(
+            "❌ GoalLogic AI failed to start.",
+            flush=True
+        )
+
+        print(
+            f"{type(e).__name__}: {e}",
+            flush=True
+        )
+
+        raise
 
 
 if __name__ == "__main__":
