@@ -14,7 +14,8 @@ from telegram.ext import (
 
 
 # ============================================================
-# GOALLOGIC AI v2.3
+# GOALLOGIC AI v2.4
+# Balanced Evidence Engine
 # ============================================================
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -41,14 +42,19 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
-        self.wfile.write(b"GoalLogic AI v2.3 is running.")
+        self.wfile.write(
+            b"GoalLogic AI v2.4 is running."
+        )
 
     def log_message(self, format, *args):
         return
 
 
 def start_health_server():
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), HealthHandler)
+    server = ThreadingHTTPServer(
+        ("0.0.0.0", PORT),
+        HealthHandler
+    )
     server.serve_forever()
 
 
@@ -58,7 +64,9 @@ threading.Thread(
 ).start()
 
 
-print(f"GoalLogic AI v2.3 is running on port {PORT}.")
+print(
+    f"GoalLogic AI v2.4 is running on port {PORT}."
+)
 
 
 # ============================================================
@@ -68,13 +76,17 @@ print(f"GoalLogic AI v2.3 is running on port {PORT}.")
 def openfoot_get(endpoint, params=None):
 
     if not OPENFOOT_API_KEY:
-        raise Exception("OPENFOOT_API_KEY is missing.")
+        raise Exception(
+            "OPENFOOT_API_KEY is missing."
+        )
 
     url = f"{OPENFOOT_BASE}{endpoint}"
 
     headers = {
         "Accept": "application/json",
-        "Authorization": f"Bearer {OPENFOOT_API_KEY}",
+        "Authorization": (
+            f"Bearer {OPENFOOT_API_KEY}"
+        ),
     }
 
     response = requests.get(
@@ -90,13 +102,18 @@ def openfoot_get(endpoint, params=None):
             error_data = response.json()
 
             error_message = (
-                error_data.get("error", {}).get("message")
+                error_data.get(
+                    "error", {}
+                ).get("message")
                 or error_data.get("message")
                 or f"HTTP {response.status_code}"
             )
 
         except Exception:
-            error_message = f"HTTP {response.status_code}"
+
+            error_message = (
+                f"HTTP {response.status_code}"
+            )
 
         raise Exception(error_message)
 
@@ -116,7 +133,10 @@ def search_team(team_name):
         },
     )
 
-    results = data.get("data", [])
+    results = data.get(
+        "data",
+        []
+    )
 
     if not results:
         return None
@@ -144,17 +164,33 @@ def search_team(team_name):
 # MATCH PARSING
 # ============================================================
 
-def parse_match(match, team_id=None):
+def parse_match(
+    match,
+    team_id=None
+):
 
-    home = match.get("homeTeam") or {}
-    away = match.get("awayTeam") or {}
+    home = (
+        match.get("homeTeam")
+        or {}
+    )
 
-    score = match.get("score") or {}
+    away = (
+        match.get("awayTeam")
+        or {}
+    )
+
+    score = (
+        match.get("score")
+        or {}
+    )
 
     home_goals = score.get("home")
     away_goals = score.get("away")
 
-    if home_goals is None or away_goals is None:
+    if (
+        home_goals is None
+        or away_goals is None
+    ):
         return None
 
     home_id = home.get("id")
@@ -175,6 +211,7 @@ def parse_match(match, team_id=None):
             ga = home_goals
 
         else:
+
             return None
 
     else:
@@ -194,9 +231,17 @@ def parse_match(match, team_id=None):
 
     return {
         "id": match.get("id"),
-        "kickoff": match.get("kickoffAt"),
-        "home": home.get("name", "Unknown"),
-        "away": away.get("name", "Unknown"),
+        "kickoff": match.get(
+            "kickoffAt"
+        ),
+        "home": home.get(
+            "name",
+            "Unknown"
+        ),
+        "away": away.get(
+            "name",
+            "Unknown"
+        ),
         "home_id": home_id,
         "away_id": away_id,
         "gf": gf,
@@ -224,7 +269,10 @@ def get_recent_matches(
         },
     )
 
-    matches = data.get("data", [])
+    matches = data.get(
+        "data",
+        []
+    )
 
     parsed = []
 
@@ -239,7 +287,10 @@ def get_recent_matches(
             parsed.append(item)
 
     parsed.sort(
-        key=lambda x: x.get("kickoff") or "",
+        key=lambda x: (
+            x.get("kickoff")
+            or ""
+        ),
         reverse=True,
     )
 
@@ -247,10 +298,12 @@ def get_recent_matches(
 
 
 # ============================================================
-# TEAM FIXTURES
+# FIXTURES
 # ============================================================
 
-def get_team_fixtures(team_id):
+def get_team_fixtures(
+    team_id
+):
 
     data = openfoot_get(
         "/v1/matches",
@@ -260,10 +313,16 @@ def get_team_fixtures(team_id):
         },
     )
 
-    matches = data.get("data", [])
+    matches = data.get(
+        "data",
+        []
+    )
 
     matches.sort(
-        key=lambda x: x.get("kickoffAt") or ""
+        key=lambda x: (
+            x.get("kickoffAt")
+            or ""
+        )
     )
 
     return matches
@@ -297,17 +356,20 @@ def calculate_stats(matches):
     sample = len(matches)
 
     wins = sum(
-        1 for m in matches
+        1
+        for m in matches
         if m["result"] == "W"
     )
 
     draws = sum(
-        1 for m in matches
+        1
+        for m in matches
         if m["result"] == "D"
     )
 
     losses = sum(
-        1 for m in matches
+        1
+        for m in matches
         if m["result"] == "L"
     )
 
@@ -322,36 +384,55 @@ def calculate_stats(matches):
     )
 
     scoring = sum(
-        1 for m in matches
+        1
+        for m in matches
         if m["gf"] > 0
     )
 
     clean_sheet = sum(
-        1 for m in matches
+        1
+        for m in matches
         if m["ga"] == 0
     )
 
     over_1_5 = sum(
-        1 for m in matches
-        if (m["gf"] + m["ga"]) > 1
+        1
+        for m in matches
+        if (
+            m["gf"]
+            + m["ga"]
+        ) > 1
     )
 
     over_2_5 = sum(
-        1 for m in matches
-        if (m["gf"] + m["ga"]) > 2
+        1
+        for m in matches
+        if (
+            m["gf"]
+            + m["ga"]
+        ) > 2
     )
 
     under_3_5 = sum(
-        1 for m in matches
-        if (m["gf"] + m["ga"]) < 4
+        1
+        for m in matches
+        if (
+            m["gf"]
+            + m["ga"]
+        ) < 4
     )
 
     btts = sum(
-        1 for m in matches
-        if m["gf"] > 0 and m["ga"] > 0
+        1
+        for m in matches
+        if (
+            m["gf"] > 0
+            and m["ga"] > 0
+        )
     )
 
     def pct(value):
+
         return round(
             (value / sample) * 100
         )
@@ -375,51 +456,32 @@ def calculate_stats(matches):
 
 
 # ============================================================
-# VENUE STATS
+# SAMPLE RELIABILITY
 # ============================================================
-
-def venue_stats(matches, venue):
-
-    filtered = [
-        m for m in matches
-        if m["venue"] == venue
-    ]
-
-    return calculate_stats(filtered)
-
-
-# ============================================================
-# CONFIDENCE ENGINE
-# ============================================================
-
-def clamp(
-    value,
-    low=MIN_CONFIDENCE,
-    high=MAX_CONFIDENCE
-):
-
-    return max(
-        low,
-        min(high, value)
-    )
-
 
 def sample_reliability(sample):
 
-    if sample <= 1:
-        return 0.25
+    if sample <= 0:
+        return 0.0
+
+    if sample == 1:
+        return 0.20
 
     if sample == 2:
-        return 0.40
+        return 0.35
 
     if sample == 3:
-        return 0.55
+        return 0.50
 
     if sample == 4:
         return 0.70
 
     return 0.85
 
+
+# ============================================================
+# CONFIDENCE
+# ============================================================
 
 def conservative_confidence(
     raw_score,
@@ -436,17 +498,36 @@ def conservative_confidence(
 
     confidence = (
         50
-        + ((raw_score - 50) * reliability)
+        + (
+            (raw_score - 50)
+            * reliability
+        )
     )
 
-    return clamp(confidence)
+    return clamp(
+        round(confidence)
+    )
+
+
+def clamp(
+    value,
+    low=MIN_CONFIDENCE,
+    high=MAX_CONFIDENCE
+):
+
+    return max(
+        low,
+        min(high, value)
+    )
 
 
 # ============================================================
 # EVIDENCE AGREEMENT
 # ============================================================
 
-def evidence_agreement(values):
+def evidence_agreement(
+    values
+):
 
     clean = [
         float(v)
@@ -457,7 +538,10 @@ def evidence_agreement(values):
     if len(clean) < 2:
         return 0
 
-    spread = max(clean) - min(clean)
+    spread = (
+        max(clean)
+        - min(clean)
+    )
 
     if spread <= 5:
         return 1.0
@@ -474,18 +558,60 @@ def evidence_agreement(values):
     return 0.15
 
 
-def apply_agreement_bonus(
+# ============================================================
+# EVIDENCE STRENGTH
+# ============================================================
+
+def evidence_strength(
     confidence,
-    evidence_values,
+    samples,
+    agreement
+):
+
+    if not samples:
+        return "🔴 Weak"
+
+    avg_sample = mean(
+        sample_reliability(s)
+        for s in samples
+    )
+
+    if (
+        confidence >= 70
+        and avg_sample >= 0.55
+        and agreement >= 0.65
+    ):
+        return "🟢 Strong"
+
+    if (
+        confidence >= 60
+        and avg_sample >= 0.40
+        and agreement >= 0.40
+    ):
+        return "🟡 Moderate"
+
+    return "🔴 Weak"
+
+
+# ============================================================
+# BALANCED MARKET CONFIDENCE
+# ============================================================
+
+def balanced_market(
+    values,
     samples
 ):
 
-    agreement = evidence_agreement(
-        evidence_values
+    raw = mean(values)
+
+    confidence = conservative_confidence(
+        raw,
+        samples
     )
 
-    if not samples:
-        return confidence
+    agreement = evidence_agreement(
+        values
+    )
 
     avg_reliability = mean(
         sample_reliability(s)
@@ -495,13 +621,25 @@ def apply_agreement_bonus(
     bonus = (
         agreement
         * avg_reliability
-        * 6
+        * 4
     )
 
-    return clamp(
-        round(
-            confidence + bonus
-        )
+    confidence += bonus
+
+    confidence = clamp(
+        round(confidence)
+    )
+
+    strength = evidence_strength(
+        confidence,
+        samples,
+        agreement
+    )
+
+    return (
+        confidence,
+        strength,
+        agreement
     )
 
 
@@ -516,11 +654,21 @@ def analyze_markets(
     team2_away
 ):
 
-    s1 = calculate_stats(team1_matches)
-    s2 = calculate_stats(team2_matches)
+    s1 = calculate_stats(
+        team1_matches
+    )
 
-    h1 = calculate_stats(team1_home)
-    a2 = calculate_stats(team2_away)
+    s2 = calculate_stats(
+        team2_matches
+    )
+
+    h1 = calculate_stats(
+        team1_home
+    )
+
+    a2 = calculate_stats(
+        team2_away
+    )
 
     markets = {}
 
@@ -528,131 +676,111 @@ def analyze_markets(
     # 1X
     # --------------------------------------------------------
 
-    team1_unbeaten_overall = (
+    overall_1x = (
         (
-            (s1["wins"] + s1["draws"])
-            / s1["sample"]
-        ) * 100
+            s1["wins"]
+            + s1["draws"]
+        )
+        / s1["sample"]
+        * 100
         if s1["sample"]
         else 50
     )
 
-    team1_unbeaten_home = (
+    home_1x = (
         (
-            (h1["wins"] + h1["draws"])
-            / h1["sample"]
-        ) * 100
+            h1["wins"]
+            + h1["draws"]
+        )
+        / h1["sample"]
+        * 100
         if h1["sample"]
         else 50
     )
 
-    team2_away_losses = (
-        (
-            a2["losses"]
-            / a2["sample"]
-        ) * 100
+    away_opponent_1x = (
+        a2["losses"]
+        / a2["sample"]
+        * 100
         if a2["sample"]
         else 50
     )
 
-    raw_1x = mean([
-        team1_unbeaten_overall,
-        team1_unbeaten_home,
-        100 - team2_away_losses,
-    ])
+    values = [
+        overall_1x,
+        home_1x,
+        100 - away_opponent_1x,
+    ]
 
-    conf_1x = conservative_confidence(
-        raw_1x,
-        [
-            s1["sample"],
-            h1["sample"],
-            a2["sample"],
-        ],
+    samples = [
+        s1["sample"],
+        h1["sample"],
+        a2["sample"],
+    ]
+
+    markets["1X"] = balanced_market(
+        values,
+        samples
     )
-
-    conf_1x = apply_agreement_bonus(
-        conf_1x,
-        [
-            team1_unbeaten_overall,
-            team1_unbeaten_home,
-            100 - team2_away_losses,
-        ],
-        [
-            s1["sample"],
-            h1["sample"],
-            a2["sample"],
-        ],
-    )
-
-    markets["1X"] = conf_1x
 
     # --------------------------------------------------------
     # X2
     # --------------------------------------------------------
 
-    team2_unbeaten_overall = (
+    overall_x2 = (
         (
-            (s2["wins"] + s2["draws"])
-            / s2["sample"]
-        ) * 100
+            s2["wins"]
+            + s2["draws"]
+        )
+        / s2["sample"]
+        * 100
         if s2["sample"]
         else 50
     )
 
-    team2_unbeaten_away = (
+    away_x2 = (
         (
-            (a2["wins"] + a2["draws"])
-            / a2["sample"]
-        ) * 100
+            a2["wins"]
+            + a2["draws"]
+        )
+        / a2["sample"]
+        * 100
         if a2["sample"]
         else 50
     )
 
-    team1_home_losses = (
-        (
-            h1["losses"]
-            / h1["sample"]
-        ) * 100
+    home_opponent_x2 = (
+        h1["losses"]
+        / h1["sample"]
+        * 100
         if h1["sample"]
         else 50
     )
 
-    raw_x2 = mean([
-        team2_unbeaten_overall,
-        team2_unbeaten_away,
-        100 - team1_home_losses,
-    ])
+    values = [
+        overall_x2,
+        away_x2,
+        100 - home_opponent_x2,
+    ]
 
-    conf_x2 = conservative_confidence(
-        raw_x2,
-        [
-            s2["sample"],
-            a2["sample"],
-            h1["sample"],
-        ],
+    samples = [
+        s2["sample"],
+        a2["sample"],
+        h1["sample"],
+    ]
+
+    markets["X2"] = balanced_market(
+        values,
+        samples
     )
-
-    conf_x2 = apply_agreement_bonus(
-        conf_x2,
-        [
-            team2_unbeaten_overall,
-            team2_unbeaten_away,
-            100 - team1_home_losses,
-        ],
-        [
-            s2["sample"],
-            a2["sample"],
-            h1["sample"],
-        ],
-    )
-
-    markets["X2"] = conf_x2
 
     # --------------------------------------------------------
     # GOAL MARKETS
     # --------------------------------------------------------
 
-    def goal_market(key):
+    def goal_market(
+        key
+    ):
 
         values = [
             s1[key],
@@ -661,30 +789,17 @@ def analyze_markets(
             a2[key],
         ]
 
-        raw = mean(values)
+        samples = [
+            s1["sample"],
+            s2["sample"],
+            h1["sample"],
+            a2["sample"],
+        ]
 
-        confidence = conservative_confidence(
-            raw,
-            [
-                s1["sample"],
-                s2["sample"],
-                h1["sample"],
-                a2["sample"],
-            ],
-        )
-
-        confidence = apply_agreement_bonus(
-            confidence,
+        return balanced_market(
             values,
-            [
-                s1["sample"],
-                s2["sample"],
-                h1["sample"],
-                a2["sample"],
-            ],
+            samples
         )
-
-        return confidence
 
     markets["O1.5"] = goal_market(
         "over_1_5"
@@ -703,7 +818,7 @@ def analyze_markets(
     )
 
     # --------------------------------------------------------
-    # TEAM 1 TO SCORE
+    # TEAM 1 SCORE
     # --------------------------------------------------------
 
     team1_values = [
@@ -713,47 +828,52 @@ def analyze_markets(
         100 - a2["clean_sheet"],
     ]
 
-    raw_team1 = mean(team1_values)
+    team1_samples = [
+        s1["sample"],
+        s2["sample"],
+        h1["sample"],
+        a2["sample"],
+    ]
 
-    team1_score = conservative_confidence(
-        raw_team1,
-        [
-            s1["sample"],
-            s2["sample"],
-            h1["sample"],
-            a2["sample"],
-        ],
+    team1_result = balanced_market(
+        team1_values,
+        team1_samples
     )
 
-    team1_score = apply_agreement_bonus(
-        team1_score,
-        team1_values,
-        [
-            s1["sample"],
-            s2["sample"],
-            h1["sample"],
-            a2["sample"],
-        ],
+    team1_confidence = (
+        team1_result[0]
     )
 
     if (
         h1["sample"] >= 2
         and h1["scoring"] <= 50
     ):
-        team1_score -= 5
+        team1_confidence -= 4
 
     if (
         a2["sample"] >= 2
         and a2["clean_sheet"] >= 67
     ):
-        team1_score -= 5
+        team1_confidence -= 4
 
-    markets["Team1 score"] = clamp(
-        round(team1_score)
+    team1_confidence = clamp(
+        round(team1_confidence)
+    )
+
+    team1_strength = evidence_strength(
+        team1_confidence,
+        team1_samples,
+        team1_result[2]
+    )
+
+    markets["Team1 score"] = (
+        team1_confidence,
+        team1_strength,
+        team1_result[2]
     )
 
     # --------------------------------------------------------
-    # TEAM 2 TO SCORE
+    # TEAM 2 SCORE
     # --------------------------------------------------------
 
     team2_values = [
@@ -763,56 +883,55 @@ def analyze_markets(
         100 - h1["clean_sheet"],
     ]
 
-    raw_team2 = mean(team2_values)
+    team2_samples = [
+        s2["sample"],
+        s1["sample"],
+        a2["sample"],
+        h1["sample"],
+    ]
 
-    team2_score = conservative_confidence(
-        raw_team2,
-        [
-            s2["sample"],
-            s1["sample"],
-            a2["sample"],
-            h1["sample"],
-        ],
+    team2_result = balanced_market(
+        team2_values,
+        team2_samples
     )
 
-    team2_score = apply_agreement_bonus(
-        team2_score,
-        team2_values,
-        [
-            s2["sample"],
-            s1["sample"],
-            a2["sample"],
-            h1["sample"],
-        ],
+    team2_confidence = (
+        team2_result[0]
     )
 
     if (
         a2["sample"] >= 2
         and a2["scoring"] <= 50
     ):
-        team2_score -= 5
+        team2_confidence -= 4
 
     if (
         h1["sample"] >= 2
         and h1["clean_sheet"] >= 67
     ):
-        team2_score -= 5
+        team2_confidence -= 4
 
-    markets["Team2 score"] = clamp(
-        round(team2_score)
+    team2_confidence = clamp(
+        round(team2_confidence)
     )
 
-    for key in markets:
+    team2_strength = evidence_strength(
+        team2_confidence,
+        team2_samples,
+        team2_result[2]
+    )
 
-        markets[key] = clamp(
-            round(markets[key])
-        )
+    markets["Team2 score"] = (
+        team2_confidence,
+        team2_strength,
+        team2_result[2]
+    )
 
     return markets
 
 
 # ============================================================
-# EXPECTED GOALS ESTIMATE
+# EXPECTED GOALS
 # ============================================================
 
 def expected_goals(
@@ -854,15 +973,35 @@ def expected_goals(
 
     return (
         round(xg1, 2),
-        round(xg2, 2),
+        round(xg2, 2)
     )
+
+
+# ============================================================
+# MARKET VALUE HELPERS
+# ============================================================
+
+def market_confidence(
+    market
+):
+
+    return market[0]
+
+
+def market_strength(
+    market
+):
+
+    return market[1]
 
 
 # ============================================================
 # PRIMARY SIGNAL
 # ============================================================
 
-def choose_primary(markets):
+def choose_primary(
+    markets
+):
 
     priority = {
         "1X": 9,
@@ -875,11 +1014,23 @@ def choose_primary(markets):
         "Team2 score": 6,
     }
 
-    candidates = [
-        (market, confidence)
-        for market, confidence in markets.items()
-        if confidence >= 68
-    ]
+    candidates = []
+
+    for market, data in markets.items():
+
+        confidence = data[0]
+        strength = data[1]
+
+        if (
+            confidence >= 68
+            and strength != "🔴 Weak"
+        ):
+            candidates.append(
+                (
+                    market,
+                    confidence
+                )
+            )
 
     if not candidates:
         return None
@@ -902,7 +1053,9 @@ def choose_primary(markets):
 # TOP 3 SIGNALS
 # ============================================================
 
-def choose_top_signals(markets):
+def choose_top_signals(
+    markets
+):
 
     priority = {
         "1X": 9,
@@ -915,11 +1068,23 @@ def choose_top_signals(markets):
         "Team2 score": 6,
     }
 
-    candidates = [
-        (market, confidence)
-        for market, confidence in markets.items()
-        if confidence >= 60
-    ]
+    candidates = []
+
+    for market, data in markets.items():
+
+        confidence = data[0]
+        strength = data[1]
+
+        if (
+            confidence >= 60
+            and strength != "🔴 Weak"
+        ):
+            candidates.append(
+                (
+                    market,
+                    confidence
+                )
+            )
 
     candidates.sort(
         key=lambda item: (
@@ -951,16 +1116,29 @@ def format_stats(
     )
 
     return (
-        f"{name} last {stats['sample']}: {form}, "
-        f"W/D/L {stats['wins']}/{stats['draws']}/{stats['losses']}, "
-        f"GF{stats['gf']} GA{stats['ga']}, "
-        f"avg {stats['avg_gf']:.2f}/{stats['avg_ga']:.2f}, "
-        f"O1.5 {stats['over_1_5']}%, "
-        f"O2.5 {stats['over_2_5']}%, "
-        f"U3.5 {stats['under_3_5']}%, "
-        f"BTTS {stats['btts']}%, "
-        f"scoring {stats['scoring']}%, "
-        f"CS {stats['clean_sheet']}%"
+        f"{name} last {stats['sample']}: "
+        f"{form}, "
+        f"W/D/L "
+        f"{stats['wins']}/"
+        f"{stats['draws']}/"
+        f"{stats['losses']}, "
+        f"GF{stats['gf']} "
+        f"GA{stats['ga']}, "
+        f"avg "
+        f"{stats['avg_gf']:.2f}/"
+        f"{stats['avg_ga']:.2f}, "
+        f"O1.5 "
+        f"{stats['over_1_5']}%, "
+        f"O2.5 "
+        f"{stats['over_2_5']}%, "
+        f"U3.5 "
+        f"{stats['under_3_5']}%, "
+        f"BTTS "
+        f"{stats['btts']}%, "
+        f"scoring "
+        f"{stats['scoring']}%, "
+        f"CS "
+        f"{stats['clean_sheet']}%"
     )
 
 
@@ -973,20 +1151,28 @@ def format_venue_stats(
     if stats["sample"] == 0:
 
         return (
-            f"{name} {venue.upper()} "
-            "sample 0: no available matches"
+            f"{name} "
+            f"{venue.upper()} "
+            "sample 0: "
+            "no available matches"
         )
 
     return (
-        f"{name} {venue.upper()} sample "
-        f"{stats['sample']}: "
-        f"W/D/L {stats['wins']}/"
+        f"{name} "
+        f"{venue.upper()} "
+        f"sample {stats['sample']}: "
+        f"W/D/L "
+        f"{stats['wins']}/"
         f"{stats['draws']}/"
         f"{stats['losses']}, "
-        f"scoring {stats['scoring']}%, "
-        f"CS {stats['clean_sheet']}%, "
-        f"O2.5 {stats['over_2_5']}%, "
-        f"BTTS {stats['btts']}%"
+        f"scoring "
+        f"{stats['scoring']}%, "
+        f"CS "
+        f"{stats['clean_sheet']}%, "
+        f"O2.5 "
+        f"{stats['over_2_5']}%, "
+        f"BTTS "
+        f"{stats['btts']}%"
     )
 
 
@@ -1000,10 +1186,10 @@ async def start_command(
 ):
 
     message = (
-        "⚽ Welcome to GoalLogic AI v2.3!\n\n"
-        "I analyze football matches using recent "
-        "form, home/away performance and evidence "
-        "agreement.\n\n"
+        "⚽ Welcome to GoalLogic AI v2.4!\n\n"
+        "Balanced football analysis using recent "
+        "form, home/away evidence, sample reliability "
+        "and indicator agreement.\n\n"
         "Commands:\n"
         "/team Chelsea\n"
         "/fixtures Chelsea\n"
@@ -1155,7 +1341,9 @@ async def fixtures_command(
 
             return
 
-        team_id = team.get("id")
+        team_id = team.get(
+            "id"
+        )
 
         matches = get_team_fixtures(
             team_id
@@ -1290,8 +1478,13 @@ async def analyze_command(
 
             return
 
-        team1_id = team1.get("id")
-        team2_id = team2.get("id")
+        team1_id = team1.get(
+            "id"
+        )
+
+        team2_id = team2.get(
+            "id"
+        )
 
         team1_actual = (
             team1.get("name")
@@ -1330,12 +1523,14 @@ async def analyze_command(
             return
 
         team1_home = [
-            m for m in team1_matches
+            m
+            for m in team1_matches
             if m["venue"] == "home"
         ]
 
         team2_away = [
-            m for m in team2_matches
+            m
+            for m in team2_matches
             if m["venue"] == "away"
         ]
 
@@ -1378,7 +1573,7 @@ async def analyze_command(
         )
 
         lines = [
-            "⚽ GOALLOGIC AI v2.3",
+            "⚽ GOALLOGIC AI v2.4",
             "",
             f"🏟️ {team1_actual} vs {team2_actual}",
             "",
@@ -1409,25 +1604,57 @@ async def analyze_command(
             "🎯 EXPECTED GOALS",
             f"{team1_actual}: {xg1}",
             f"{team2_actual}: {xg2}",
-            f"Total expected goals: {round(xg1 + xg2, 2)}",
+            (
+                "Total expected goals: "
+                f"{round(xg1 + xg2, 2)}"
+            ),
             "",
             "📊 MARKETS",
-            f"{'🟢' if markets['1X'] >= 68 else '🟡' if markets['1X'] >= 60 else '🔴'} 1X: {markets['1X']}%",
-            f"{'🟢' if markets['X2'] >= 68 else '🟡' if markets['X2'] >= 60 else '🔴'} X2: {markets['X2']}%",
-            f"{'🟢' if markets['O1.5'] >= 68 else '🟡' if markets['O1.5'] >= 60 else '🔴'} O1.5: {markets['O1.5']}%",
-            f"{'🟢' if markets['O2.5'] >= 68 else '🟡' if markets['O2.5'] >= 60 else '🔴'} O2.5: {markets['O2.5']}%",
-            f"{'🟢' if markets['U3.5'] >= 68 else '🟡' if markets['U3.5'] >= 60 else '🔴'} U3.5: {markets['U3.5']}%",
-            f"{'🟢' if markets['BTTS'] >= 68 else '🟡' if markets['BTTS'] >= 60 else '🔴'} BTTS: {markets['BTTS']}%",
-            f"{'🟢' if markets['Team1 score'] >= 68 else '🟡' if markets['Team1 score'] >= 60 else '🔴'} Team1 score: {markets['Team1 score']}%",
-            f"{'🟢' if markets['Team2 score'] >= 68 else '🟡' if markets['Team2 score'] >= 60 else '🔴'} Team2 score: {markets['Team2 score']}%",
-            "",
         ]
+
+        market_order = [
+            "1X",
+            "X2",
+            "O1.5",
+            "O2.5",
+            "U3.5",
+            "BTTS",
+            "Team1 score",
+            "Team2 score",
+        ]
+
+        for market in market_order:
+
+            confidence = (
+                markets[market][0]
+            )
+
+            strength = (
+                markets[market][1]
+            )
+
+            if confidence >= 68:
+                icon = "🟢"
+
+            elif confidence >= 60:
+                icon = "🟡"
+
+            else:
+                icon = "🔴"
+
+            lines.append(
+                f"{icon} {market}: "
+                f"{confidence}% "
+                f"{strength}"
+            )
+
+        lines.append("")
 
         if top_signals:
 
-            lines.extend([
-                "🏆 TOP SIGNALS",
-            ])
+            lines.append(
+                "🏆 TOP SIGNALS"
+            )
 
             for index, (
                 market,
@@ -1437,8 +1664,15 @@ async def analyze_command(
                 start=1
             ):
 
+                strength = (
+                    markets[market][1]
+                )
+
                 lines.append(
-                    f"{index}. {market} — {confidence}%"
+                    f"{index}. "
+                    f"{market} — "
+                    f"{confidence}% "
+                    f"{strength}"
                 )
 
             lines.append("")
@@ -1455,7 +1689,7 @@ async def analyze_command(
                 "",
                 "⚠️ Statistical signal only — not a guarantee.",
                 "",
-                "🤖 Model note: Confidence is based on recent form, venue data, sample reliability and agreement between indicators.",
+                "🤖 v2.4 Model note: Confidence is adjusted for sample size, home/away evidence and agreement between indicators.",
             ])
 
         else:
@@ -1463,7 +1697,7 @@ async def analyze_command(
             lines.extend([
                 "⚠️ NO STRONG PRIMARY SIGNAL",
                 "",
-                "The available sample does not provide enough evidence for a high-confidence market.",
+                "The available evidence does not meet the model's stronger-signal requirements.",
                 "",
                 "📌 Advice: AVOID.",
             ])
@@ -1499,7 +1733,9 @@ def main():
 
     app = (
         Application.builder()
-        .token(TELEGRAM_BOT_TOKEN)
+        .token(
+            TELEGRAM_BOT_TOKEN
+        )
         .build()
     )
 
@@ -1539,7 +1775,7 @@ def main():
     )
 
     print(
-        "GoalLogic AI v2.3 Telegram bot starting..."
+        "GoalLogic AI v2.4 Telegram bot starting..."
     )
 
     app.run_polling(
