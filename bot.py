@@ -2,7 +2,6 @@ import os
 import math
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from statistics import mean
 
 import requests
 from telegram import Update
@@ -13,11 +12,11 @@ from telegram.ext import (
 )
 
 
-# ============================================================
-# GOALLOGIC AI v3.0
-# ============================================================
+# =========================================================
+# GOALLOGIC AI v3.1
+# =========================================================
 
-VERSION = "3.0"
+VERSION = "3.1"
 
 API_BASE = "https://openfootapi.com/v1"
 SEASON = "2026/27"
@@ -29,14 +28,14 @@ OPENFOOT_API_KEY = os.getenv("OPENFOOT_API_KEY")
 PORT = int(os.getenv("PORT", "10000"))
 
 
-# ============================================================
+# =========================================================
 # RENDER HEALTH SERVER
-# ============================================================
+# =========================================================
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-type", "text/plain")
         self.end_headers()
         self.wfile.write(
             f"GoalLogic AI v{VERSION} is running.".encode()
@@ -52,328 +51,250 @@ def start_health_server():
     server.serve_forever()
 
 
-# ============================================================
+# =========================================================
 # API
-# ============================================================
+# =========================================================
 
-def api_headers():
-    return {
+def api_get(endpoint, params=None):
+    if not OPENFOOT_API_KEY:
+        return None
+
+    url = f"{API_BASE}/{endpoint.lstrip('/')}"
+
+    headers = {
         "Authorization": f"Bearer {OPENFOOT_API_KEY}",
         "Accept": "application/json",
     }
 
-
-def api_get(endpoint, params=None):
-    if not OPENFOOT_API_KEY:
-        return None, "OPENFOOT_API_KEY is missing."
-
-    url = f"{API_BASE}/{endpoint.lstrip('/')}"
-
     try:
         response = requests.get(
             url,
-            headers=api_headers(),
-            params=params,
+            headers=headers,
+            params=params or {},
             timeout=20,
         )
 
         if response.status_code != 200:
-            return None, (
-                f"API HTTP {response.status_code}: "
+            print(
+                f"API error {response.status_code}: "
                 f"{response.text[:500]}"
             )
+            return None
 
-        try:
-            return response.json(), None
-        except Exception:
-            return None, "API returned invalid JSON."
+        return response.json()
 
-    except requests.RequestException as exc:
-        return None, f"API request failed: {exc}"
-
-
-# ============================================================
-# GENERAL HELPERS
-# ============================================================
-
-def safe_float(value, default=0.0):
-    try:
-        if value is None:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+    except Exception as e:
+        print(f"API request error: {e}")
+        return None
 
 
-def pct(value):
-    return int(round(max(0.0, min(100.0, value))))
+# =========================================================
+# TEAM SEARCH
+# =========================================================
+
+def find_team(query):
+    data = api_get("search", {"q": query})
+
+    if not data:
+        return None
+
+    teams = data.get("data", [])
+
+    if not teams:
+        return None
+
+    query_lower = query.lower().strip()
+
+    # Exact name match first
+    for team in teams:
+        name = str(team.get("name", "")).strip()
+
+        if name.lower() == query_lower:
+            return team
+
+    # Partial match
+    for team in teams:
+        name = str(team.get("name", "")).strip()
+
+        if query_lower in name.lower():
+            return team
+
+    return teams[0]
 
 
-def normalize_name(name):
-    return " ".join(str(name or "").lower().strip().split())
+# =========================================================
+# BASIC HELPERS
+# =========================================================
+
+def team_id(team):
+    return str(team.get("id", ""))
 
 
 def team_name(team):
-    if isinstance(team, dict):
-        return (
-            team.get("name")
-            or team.get("shortName")
-            or team.get("displayName")
-            or "Unknown"
+    return str(team.get("name", "Unknown Team"))
+
+
+def safe_float(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def clamp(value, low, high):
+    return max(low, min(high, value))
+
+
+# =========================================================
+# SCORE EXTRACTION
+# =========================================================
+
+def extract_score_pair(match):
+    """
+    Tries several possible OpenFoot score structures.
+    Returns:
+        (home_goals, away_goals)
+    or:
+        None
+    """
+
+    possible_pairs = [
+        ("homeScore", "awayScore"),
+        ("homeGoals", "awayGoals"),
+        ("home_score", "away_score"),
+        ("homeGoalsScored", "awayGoalsScored"),
+    ]
+
+    for home_key, away_key in possible_pairs:
+        if home_key in match and away_key in match:
+            h = match.get(home_key)
+            a = match.get(away_key)
+
+            if h is not None and a is not None:
+                try:
+                    return int(h), int(a)
+                except Exception:
+                    pass
+
+    # Nested score object
+    score = match.get("score")
+
+    if isinstance(score, dict):
+
+        # score.home / score.away
+        h = score.get("home")
+        a = score.get("away")
+
+        if h is not None and a is not None:
+            try:
+                return int(h), int(a)
+            except Exception:
+                pass
+
+        # score.fulltime.home / away
+        fulltime = score.get("fulltime")
+
+        if isinstance(fulltime, dict):
+            h = fulltime.get("home")
+            a = fulltime.get("away")
+
+            if h is not None and a is not None:
+                try:
+                    return int(h), int(a)
+                except Exception:
+                    pass
+
+        # score.final.home / away
+        final = score.get("final")
+
+        if isinstance(final, dict):
+            h = final.get("home")
+            a = final.get("away")
+
+            if h is not None and a is not None:
+                try:
+                    return int(h), int(a)
+                except Exception:
+                    pass
+
+    # Nested teams with scores
+    home_team = match.get("homeTeam")
+    away_team = match.get("awayTeam")
+
+    if isinstance(home_team, dict) and isinstance(away_team, dict):
+
+        h = (
+            home_team.get("score")
+            if home_team.get("score") is not None
+            else home_team.get("goals")
         )
 
-    return str(team or "Unknown")
+        a = (
+            away_team.get("score")
+            if away_team.get("score") is not None
+            else away_team.get("goals")
+        )
 
-
-def team_id(team):
-    if not isinstance(team, dict):
-        return None
-
-    return (
-        team.get("id")
-        or team.get("teamId")
-        or team.get("uid")
-    )
-
-
-def extract_data(payload):
-    if not isinstance(payload, dict):
-        return []
-
-    data = payload.get("data")
-
-    if isinstance(data, list):
-        return data
-
-    if isinstance(data, dict):
-        return [data]
-
-    return []
-
-
-# ============================================================
-# TEAM SEARCH
-# ============================================================
-
-def search_team(query):
-    payload, error = api_get(
-        "search",
-        {"q": query},
-    )
-
-    if error:
-        return [], error
-
-    return extract_data(payload), None
-
-
-def find_team(query):
-    results, error = search_team(query)
-
-    if error:
-        return None, error
-
-    if not results:
-        return None, f"No team found for '{query}'."
-
-    wanted = normalize_name(query)
-
-    # Exact name first
-    for item in results:
-        name = team_name(item)
-
-        if normalize_name(name) == wanted:
-            return item, None
-
-    # Then starts-with
-    for item in results:
-        name = normalize_name(team_name(item))
-
-        if name.startswith(wanted):
-            return item, None
-
-    # Otherwise first result
-    return results[0], None
-
-
-# ============================================================
-# SCORE EXTRACTION
-# ============================================================
-
-def value_from_object(obj, keys):
-    if not isinstance(obj, dict):
-        return None
-
-    for key in keys:
-        if key in obj and obj[key] is not None:
-            return obj[key]
+        if h is not None and a is not None:
+            try:
+                return int(h), int(a)
+            except Exception:
+                pass
 
     return None
 
 
-def extract_score_pair(match):
-    """
-    Attempts to support several common OpenFoot score structures.
-    Returns (home_score, away_score), or (None, None).
-    """
-
-    # Direct fields
-    home = value_from_object(
-        match,
-        [
-            "homeScore",
-            "homeGoals",
-            "home_score",
-            "home_score_ft",
-        ],
-    )
-
-    away = value_from_object(
-        match,
-        [
-            "awayScore",
-            "awayGoals",
-            "away_score",
-            "away_score_ft",
-        ],
-    )
-
-    if home is not None and away is not None:
-        return safe_float(home), safe_float(away)
-
-    # Score object
-    score = match.get("score")
-
-    if isinstance(score, dict):
-        home = value_from_object(
-            score,
-            [
-                "home",
-                "homeScore",
-                "homeGoals",
-                "fullTimeHome",
-            ],
-        )
-
-        away = value_from_object(
-            score,
-            [
-                "away",
-                "awayScore",
-                "awayGoals",
-                "fullTimeAway",
-            ],
-        )
-
-        if isinstance(home, dict):
-            home = value_from_object(
-                home,
-                ["current", "display", "fullTime", "goals"],
-            )
-
-        if isinstance(away, dict):
-            away = value_from_object(
-                away,
-                ["current", "display", "fullTime", "goals"],
-            )
-
-        if home is not None and away is not None:
-            return safe_float(home), safe_float(away)
-
-    # Nested teams with scores
-    home_team = match.get("homeTeam")
-
-    away_team = match.get("awayTeam")
-
-    if isinstance(home_team, dict) and isinstance(away_team, dict):
-        home_score = value_from_object(
-            home_team,
-            ["score", "goals", "homeScore"],
-        )
-
-        away_score = value_from_object(
-            away_team,
-            ["score", "goals", "awayScore"],
-        )
-
-        if isinstance(home_score, dict):
-            home_score = value_from_object(
-                home_score,
-                ["current", "fullTime", "display"],
-            )
-
-        if isinstance(away_score, dict):
-            away_score = value_from_object(
-                away_score,
-                ["current", "fullTime", "display"],
-            )
-
-        if home_score is not None and away_score is not None:
-            return safe_float(home_score), safe_float(away_score)
-
-    return None, None
-
-
-# ============================================================
+# =========================================================
 # MATCH HELPERS
-# ============================================================
+# =========================================================
 
-def match_team_ids(match):
-    home = match.get("homeTeam")
-    away = match.get("awayTeam")
+def match_team_name(match, side):
+    obj = match.get(f"{side}Team")
 
-    return team_id(home), team_id(away)
+    if isinstance(obj, dict):
+        return str(obj.get("name", ""))
+
+    return ""
 
 
-def match_team_names(match):
-    home = match.get("homeTeam")
-    away = match.get("awayTeam")
+def match_team_id(match, side):
+    obj = match.get(f"{side}Team")
 
-    return team_name(home), team_name(away)
+    if isinstance(obj, dict):
+        return str(obj.get("id", ""))
+
+    return ""
 
 
 def is_completed_match(match):
-    status = str(
-        match.get("status")
-        or match.get("state")
-        or ""
-    ).lower()
+    score = extract_score_pair(match)
 
-    finished_words = [
-        "finished",
-        "complete",
-        "completed",
-        "ft",
-        "full time",
-    ]
+    if score is None:
+        return False
 
-    if any(word in status for word in finished_words):
-        return True
+    status = str(match.get("status", "")).lower()
 
-    home_score, away_score = extract_score_pair(match)
+    unfinished_statuses = {
+        "scheduled",
+        "upcoming",
+        "pending",
+        "not_started",
+        "not started",
+        "postponed",
+        "cancelled",
+        "canceled",
+    }
 
-    return home_score is not None and away_score is not None
+    if status in unfinished_statuses:
+        return False
 
-
-def kickoff_sort_value(match):
-    value = (
-        match.get("kickoffAt")
-        or match.get("kickoff")
-        or match.get("date")
-        or match.get("startTime")
-        or ""
-    )
-
-    return str(value)
+    return True
 
 
 def get_team_matches(team):
     tid = team_id(team)
 
-    if not tid:
-        return [], "Team ID unavailable."
-
-    payload, error = api_get(
+    data = api_get(
         "matches",
         {
             "team": tid,
@@ -381,116 +302,65 @@ def get_team_matches(team):
         },
     )
 
-    if error:
-        return [], error
+    if not data:
+        return []
 
-    matches = extract_data(payload)
+    matches = data.get("data", [])
 
-    completed = []
+    completed = [
+        m for m in matches
+        if is_completed_match(m)
+    ]
 
-    for match in matches:
-        if is_completed_match(match):
-            home_score, away_score = extract_score_pair(match)
-
-            if home_score is None or away_score is None:
-                continue
-
-            match["_home_score"] = home_score
-            match["_away_score"] = away_score
-
-            completed.append(match)
-
+    # Sort newest first
     completed.sort(
-        key=kickoff_sort_value,
+        key=lambda x: str(
+            x.get("kickoffAt", "")
+        ),
         reverse=True,
     )
 
-    return completed, None
+    return completed
 
 
-def team_oriented_matches(team, matches):
-    """
-    Converts matches into:
-    {
-        match,
-        venue,
-        opponent,
-        gf,
-        ga,
-        result
-    }
-    """
+def orient_match(match, tid):
+    home_id = match_team_id(match, "home")
+    away_id = match_team_id(match, "away")
 
-    tid = team_id(team)
-    wanted_name = normalize_name(team_name(team))
+    score = extract_score_pair(match)
 
-    output = []
+    if score is None:
+        return None
 
-    for match in matches:
-        home = match.get("homeTeam")
-        away = match.get("awayTeam")
+    hg, ag = score
 
-        hid = team_id(home)
-        aid = team_id(away)
+    if home_id == tid:
+        return {
+            "venue": "HOME",
+            "goals_for": hg,
+            "goals_against": ag,
+            "opponent": match_team_name(match, "away"),
+            "date": str(match.get("kickoffAt", ""))[:10],
+        }
 
-        home_name = team_name(home)
-        away_name = team_name(away)
+    if away_id == tid:
+        return {
+            "venue": "AWAY",
+            "goals_for": ag,
+            "goals_against": hg,
+            "opponent": match_team_name(match, "home"),
+            "date": str(match.get("kickoffAt", ""))[:10],
+        }
 
-        is_home = False
-
-        if tid and hid == tid:
-            is_home = True
-        elif tid and aid == tid:
-            is_home = False
-        else:
-            if normalize_name(home_name) == wanted_name:
-                is_home = True
-            elif normalize_name(away_name) == wanted_name:
-                is_home = False
-            else:
-                continue
-
-        hs = safe_float(match.get("_home_score"))
-        aws = safe_float(match.get("_away_score"))
-
-        if is_home:
-            gf = hs
-            ga = aws
-            opponent = away_name
-            venue = "HOME"
-        else:
-            gf = aws
-            ga = hs
-            opponent = home_name
-            venue = "AWAY"
-
-        if gf > ga:
-            result = "W"
-        elif gf < ga:
-            result = "L"
-        else:
-            result = "D"
-
-        output.append(
-            {
-                "match": match,
-                "venue": venue,
-                "opponent": opponent,
-                "gf": gf,
-                "ga": ga,
-                "result": result,
-            }
-        )
-
-    return output
+    return None
 
 
-# ============================================================
+# =========================================================
 # STATS
-# ============================================================
+# =========================================================
 
-def calculate_stats(oriented_matches):
-    if not oriented_matches:
+def calculate_stats(matches):
+    if not matches:
         return {
             "games": 0,
             "wins": 0,
@@ -500,75 +370,57 @@ def calculate_stats(oriented_matches):
             "ga": 0,
             "avg_gf": 0,
             "avg_ga": 0,
-            "over05": 0,
-            "over15": 0,
-            "over25": 0,
-            "under35": 0,
-            "under45": 0,
+            "o15": 0,
+            "o25": 0,
+            "u35": 0,
             "btts": 0,
             "scoring": 0,
             "clean_sheet": 0,
         }
 
-    games = len(oriented_matches)
+    games = len(matches)
 
-    wins = sum(
-        1 for m in oriented_matches
-        if m["result"] == "W"
-    )
+    wins = draws = losses = 0
+    gf = ga = 0
 
-    draws = sum(
-        1 for m in oriented_matches
-        if m["result"] == "D"
-    )
+    o15 = o25 = u35 = btts = 0
+    scoring = clean_sheet = 0
 
-    losses = sum(
-        1 for m in oriented_matches
-        if m["result"] == "L"
-    )
+    for m in matches:
+        f = m["goals_for"]
+        a = m["goals_against"]
 
-    gf = sum(m["gf"] for m in oriented_matches)
-    ga = sum(m["ga"] for m in oriented_matches)
+        gf += f
+        ga += a
 
-    over05 = sum(
-        1 for m in oriented_matches
-        if m["gf"] + m["ga"] > 0.5
-    )
+        if f > a:
+            wins += 1
+        elif f == a:
+            draws += 1
+        else:
+            losses += 1
 
-    over15 = sum(
-        1 for m in oriented_matches
-        if m["gf"] + m["ga"] > 1.5
-    )
+        total = f + a
 
-    over25 = sum(
-        1 for m in oriented_matches
-        if m["gf"] + m["ga"] > 2.5
-    )
+        if total > 1:
+            o15 += 1
 
-    under35 = sum(
-        1 for m in oriented_matches
-        if m["gf"] + m["ga"] < 3.5
-    )
+        if total > 2:
+            o25 += 1
 
-    under45 = sum(
-        1 for m in oriented_matches
-        if m["gf"] + m["ga"] < 4.5
-    )
+        if total < 4:
+            u35 += 1
 
-    btts = sum(
-        1 for m in oriented_matches
-        if m["gf"] > 0 and m["ga"] > 0
-    )
+        if f > 0 and a > 0:
+            btts += 1
 
-    scoring = sum(
-        1 for m in oriented_matches
-        if m["gf"] > 0
-    )
+        if f > 0:
+            scoring += 1
 
-    clean_sheet = sum(
-        1 for m in oriented_matches
-        if m["ga"] == 0
-    )
+        if a == 0:
+            clean_sheet += 1
+
+    pct = lambda x: round((x / games) * 100)
 
     return {
         "games": games,
@@ -579,157 +431,101 @@ def calculate_stats(oriented_matches):
         "ga": ga,
         "avg_gf": gf / games,
         "avg_ga": ga / games,
-        "over05": over05 / games * 100,
-        "over15": over15 / games * 100,
-        "over25": over25 / games * 100,
-        "under35": under35 / games * 100,
-        "under45": under45 / games * 100,
-        "btts": btts / games * 100,
-        "scoring": scoring / games * 100,
-        "clean_sheet": clean_sheet / games * 100,
+        "o15": pct(o15),
+        "o25": pct(o25),
+        "u35": pct(u35),
+        "btts": pct(btts),
+        "scoring": pct(scoring),
+        "clean_sheet": pct(clean_sheet),
     }
 
 
-def recent_form_string(matches):
-    return "".join(m["result"] for m in matches)
+def filter_venue(matches, venue):
+    return [
+        m for m in matches
+        if m["venue"] == venue
+    ]
 
 
-# ============================================================
+# =========================================================
 # XG MODEL
-# ============================================================
+# =========================================================
 
-def shrink(value, baseline=1.35, strength=0.25):
+def estimate_xg(recent, venue, opponent_venue):
+    """
+    Heuristic model-estimated xG.
+    It is NOT provider xG.
+    """
+
+    if not recent:
+        return 1.20
+
+    recent_avg_for = recent["avg_gf"]
+    recent_avg_against = recent["avg_ga"]
+
+    if venue and venue["games"] > 0:
+        venue_attack = venue["avg_gf"]
+        venue_defense = venue["avg_ga"]
+    else:
+        venue_attack = recent_avg_for
+        venue_defense = recent_avg_ga
+
+    if opponent_venue and opponent_venue["games"] > 0:
+        opp_defense = opponent_venue["avg_ga"]
+    else:
+        opp_defense = 1.20
+
+    attack_component = (
+        0.50 * recent_avg_for
+        + 0.30 * venue_attack
+        + 0.20 * opp_defense
+    )
+
+    defensive_component = (
+        0.60 * recent_avg_against
+        + 0.40 * venue_defense
+    )
+
+    xg = (
+        0.60 * attack_component
+        + 0.40 * defensive_component
+    )
+
+    return clamp(xg, 0.25, 3.50)
+
+
+# =========================================================
+# POISSON
+# =========================================================
+
+def poisson_pmf(k, lam):
+    if lam <= 0:
+        return 1.0 if k == 0 else 0.0
+
     return (
-        value * (1 - strength)
-        + baseline * strength
+        math.exp(-lam)
+        * (lam ** k)
+        / math.factorial(k)
     )
 
 
-def estimate_xg(
-    home_recent,
-    away_recent,
-    home_venue,
-    away_venue,
-):
-    home_stats = calculate_stats(home_recent)
-    away_stats = calculate_stats(away_recent)
-
-    home_venue_stats = calculate_stats(home_venue)
-    away_venue_stats = calculate_stats(away_venue)
-
-    # Recent attacking strength
-    home_attack = home_stats["avg_gf"]
-    away_attack = away_stats["avg_gf"]
-
-    # Recent defensive concession
-    home_defense = home_stats["avg_ga"]
-    away_defense = away_stats["avg_ga"]
-
-    # Venue-specific evidence
-    home_venue_attack = (
-        home_venue_stats["avg_gf"]
-        if home_venue_stats["games"] > 0
-        else home_attack
-    )
-
-    home_venue_defense = (
-        home_venue_stats["avg_ga"]
-        if home_venue_stats["games"] > 0
-        else home_defense
-    )
-
-    away_venue_attack = (
-        away_venue_stats["avg_gf"]
-        if away_venue_stats["games"] > 0
-        else away_attack
-    )
-
-    away_venue_defense = (
-        away_venue_stats["avg_ga"]
-        if away_venue_stats["games"] > 0
-        else away_defense
-    )
-
-    # Blend recent + venue
-    home_base = (
-        home_attack * 0.55
-        + away_defense * 0.45
-    )
-
-    away_base = (
-        away_attack * 0.55
-        + home_defense * 0.45
-    )
-
-    home_venue_xg = (
-        home_venue_attack * 0.55
-        + away_venue_defense * 0.45
-    )
-
-    away_venue_xg = (
-        away_venue_attack * 0.55
-        + home_venue_defense * 0.45
-    )
-
-    if home_venue_stats["games"] > 0:
-        home_xg = (
-            home_base * 0.65
-            + home_venue_xg * 0.35
-        )
-    else:
-        home_xg = home_base
-
-    if away_venue_stats["games"] > 0:
-        away_xg = (
-            away_base * 0.65
-            + away_venue_xg * 0.35
-        )
-    else:
-        away_xg = away_base
-
-    # Shrink small samples toward league-neutral scoring
-    home_xg = shrink(home_xg, 1.35, 0.18)
-    away_xg = shrink(away_xg, 1.15, 0.18)
-
-    # Avoid extreme estimates from tiny samples
-    home_xg = max(0.20, min(3.50, home_xg))
-    away_xg = max(0.20, min(3.50, away_xg))
-
-    return home_xg, away_xg
-
-
-# ============================================================
-# POISSON MODEL
-# ============================================================
-
-def poisson_probability(goals, expected):
-    try:
-        return (
-            math.exp(-expected)
-            * (expected ** goals)
-            / math.factorial(goals)
-        )
-    except (OverflowError, ValueError):
-        return 0.0
-
-
-def build_score_matrix(home_xg, away_xg, max_goals=8):
+def build_poisson_matrix(home_xg, away_xg, max_goals=8):
     matrix = {}
 
     total = 0.0
 
-    for home_goals in range(max_goals + 1):
-        ph = poisson_probability(home_goals, home_xg)
+    for h in range(max_goals + 1):
+        for a in range(max_goals + 1):
 
-        for away_goals in range(max_goals + 1):
-            pa = poisson_probability(away_goals, away_xg)
+            p = (
+                poisson_pmf(h, home_xg)
+                * poisson_pmf(a, away_xg)
+            )
 
-            probability = ph * pa
+            matrix[(h, a)] = p
+            total += p
 
-            matrix[(home_goals, away_goals)] = probability
-            total += probability
-
-    # Normalize because we truncate at max_goals.
+    # Normalize because the matrix is truncated at max_goals.
     if total > 0:
         for key in matrix:
             matrix[key] /= total
@@ -753,41 +549,41 @@ def matrix_markets(matrix):
     home_score = 0.0
     away_score = 0.0
 
-    for (hg, ag), probability in matrix.items():
-        total_goals = hg + ag
+    for (h, a), p in matrix.items():
 
-        if hg > ag:
-            home_win += probability
-        elif hg == ag:
-            draw += probability
+        if h > a:
+            home_win += p
+        elif h == a:
+            draw += p
         else:
-            away_win += probability
+            away_win += p
 
-        if total_goals > 0:
-            over05 += probability
+        total = h + a
 
-        if total_goals > 1:
-            over15 += probability
+        if total > 0:
+            over05 += p
 
-        if total_goals > 2:
-            over25 += probability
+        if total > 1:
+            over15 += p
 
-        if total_goals < 4:
-            under35 += probability
+        if total > 2:
+            over25 += p
 
-        if total_goals < 5:
-            under45 += probability
+        if total < 4:
+            under35 += p
 
-        if hg > 0 and ag > 0:
-            btts += probability
+        if total < 5:
+            under45 += p
 
-        if hg > 0:
-            home_score += probability
+        if h > 0 and a > 0:
+            btts += p
 
-        if ag > 0:
-            away_score += probability
+        if h > 0:
+            home_score += p
 
-    # Normalize 1X2 exactly.
+        if a > 0:
+            away_score += p
+
     result_total = home_win + draw + away_win
 
     if result_total > 0:
@@ -796,26 +592,25 @@ def matrix_markets(matrix):
         away_win /= result_total
 
     return {
-        "home_win": home_win * 100,
-        "draw": draw * 100,
-        "away_win": away_win * 100,
-
-        "double_home": (home_win + draw) * 100,
-        "double_away": (away_win + draw) * 100,
-
-        "over05": over05 * 100,
-        "over15": over15 * 100,
-        "over25": over25 * 100,
-
-        "under35": under35 * 100,
-        "under45": under45 * 100,
-
-        "btts": btts * 100,
-
-        "home_score": home_score * 100,
-        "away_score": away_score * 100,
+        "home_win": home_win,
+        "draw": draw,
+        "away_win": away_win,
+        "1x": home_win + draw,
+        "x2": draw + away_win,
+        "over05": over05,
+        "over15": over15,
+        "over25": over25,
+        "under35": under35,
+        "under45": under45,
+        "btts": btts,
+        "home_score": home_score,
+        "away_score": away_score,
     }
 
+
+# =========================================================
+# TOP SCORELINES
+# =========================================================
 
 def top_scorelines(matrix, count=3):
     ordered = sorted(
@@ -827,479 +622,385 @@ def top_scorelines(matrix, count=3):
     return ordered[:count]
 
 
-# ============================================================
-# DATA STRENGTH / CONFIDENCE
-# ============================================================
+# =========================================================
+# GOAL DISTRIBUTION
+# =========================================================
 
-def data_strength(
-    home_recent,
-    away_recent,
-    home_venue,
-    away_venue,
+def goal_distribution(matrix):
+    distribution = {}
+
+    for (h, a), p in matrix.items():
+        total = h + a
+        distribution[total] = (
+            distribution.get(total, 0.0) + p
+        )
+
+    return distribution
+
+
+def format_goal_distribution(matrix):
+    dist = goal_distribution(matrix)
+
+    parts = []
+
+    for goals in range(0, 6):
+        p = dist.get(goals, 0.0) * 100
+        parts.append(f"{goals}: {p:.0f}%")
+
+    return " | ".join(parts)
+
+
+# =========================================================
+# DATA STRENGTH
+# =========================================================
+
+def calculate_data_strength(
+    home_recent_count,
+    away_recent_count,
+    home_venue_count,
+    away_venue_count,
 ):
-    recent_count = min(
-        len(home_recent),
-        SAMPLE_SIZE,
-    )
+    """
+    Conservative data-strength calculation.
 
-    away_count = min(
-        len(away_recent),
-        SAMPLE_SIZE,
-    )
+    Recent sample max contribution:
+    60 points
 
-    venue_home = min(
-        len(home_venue),
-        SAMPLE_SIZE,
-    )
-
-    venue_away = min(
-        len(away_venue),
-        SAMPLE_SIZE,
-    )
+    Venue sample max contribution:
+    40 points
+    """
 
     recent_score = (
-        (recent_count / SAMPLE_SIZE) * 0.55
-        + (away_count / SAMPLE_SIZE) * 0.25
-        + (venue_home / SAMPLE_SIZE) * 0.10
-        + (venue_away / SAMPLE_SIZE) * 0.10
+        min(home_recent_count, SAMPLE_SIZE) / SAMPLE_SIZE
+        + min(away_recent_count, SAMPLE_SIZE) / SAMPLE_SIZE
+    ) / 2
+
+    venue_target = 5
+
+    venue_score = (
+        min(home_venue_count, venue_target) / venue_target
+        + min(away_venue_count, venue_target) / venue_target
+    ) / 2
+
+    strength = (
+        60 * recent_score
+        + 40 * venue_score
     )
 
-    return max(0.0, min(100.0, recent_score * 100))
+    return round(clamp(strength, 0, 100))
 
 
-def confidence_label(strength):
-    if strength >= 85:
-        return "HIGH"
-    if strength >= 65:
-        return "MEDIUM"
-    return "LOW"
+# =========================================================
+# CONFIDENCE CALIBRATION
+# =========================================================
+
+def calculate_model_confidence(
+    data_strength,
+    markets,
+):
+    """
+    Conservative confidence.
+
+    This does NOT mean probability of a bet winning.
+    It is a measure of how much trust the model places
+    in its current analysis.
+    """
+
+    strongest = max(
+        markets["over05"],
+        markets["over15"],
+        markets["over25"],
+        markets["under35"],
+        markets["under45"],
+        markets["btts"],
+        markets["home_score"],
+        markets["away_score"],
+        markets["1x"],
+        markets["x2"],
+    )
+
+    # Distance from 50%.
+    signal_strength = abs(strongest - 0.50)
+
+    signal_component = clamp(
+        50 + (signal_strength * 100),
+        50,
+        90,
+    )
+
+    confidence = (
+        0.55 * data_strength
+        + 0.45 * signal_component
+    )
+
+    # Conservative cap for small samples.
+    if data_strength < 60:
+        confidence *= 0.82
+    elif data_strength < 75:
+        confidence *= 0.90
+    elif data_strength < 85:
+        confidence *= 0.95
+
+    return round(
+        clamp(confidence, 50, 90)
+    )
 
 
-# ============================================================
-# TOP SIGNALS
-# ============================================================
+# =========================================================
+# PROBABILITY AUDIT
+# =========================================================
 
-def build_markets(model):
-    return {
-        "Over 0.5": model["over05"],
-        "Over 1.5": model["over15"],
-        "Over 2.5": model["over25"],
-        "Under 3.5": model["under35"],
-        "Under 4.5": model["under45"],
-        "BTTS": model["btts"],
-        "Team 1 to score": model["home_score"],
-        "Team 2 to score": model["away_score"],
-        "1X": model["double_home"],
-        "X2": model["double_away"],
+def probability_audit(markets):
+    result_sum = (
+        markets["home_win"]
+        + markets["draw"]
+        + markets["away_win"]
+    )
+
+    checks = [
+        abs(result_sum - 1.0) <= 0.01,
+        abs(
+            markets["1x"]
+            - (
+                markets["home_win"]
+                + markets["draw"]
+            )
+        ) <= 0.01,
+        abs(
+            markets["x2"]
+            - (
+                markets["draw"]
+                + markets["away_win"]
+            )
+        ) <= 0.01,
+        markets["over05"] >= markets["over15"],
+        markets["over15"] >= markets["over25"],
+        markets["under35"] <= markets["under45"],
+        markets["btts"] <= markets["home_score"],
+        markets["btts"] <= markets["away_score"],
+    ]
+
+    return all(checks)
+
+
+# =========================================================
+# SIGNALS
+# =========================================================
+
+def get_top_signals(markets):
+    signals = {
+        "Over 0.5": markets["over05"],
+        "Over 1.5": markets["over15"],
+        "Over 2.5": markets["over25"],
+        "Under 3.5": markets["under35"],
+        "Under 4.5": markets["under45"],
+        "BTTS": markets["btts"],
+        "Team 1 to score": markets["home_score"],
+        "Team 2 to score": markets["away_score"],
+        "1X": markets["1x"],
+        "X2": markets["x2"],
     }
 
-
-def top_signals(model, count=3):
-    markets = build_markets(model)
-
     return sorted(
-        markets.items(),
-        key=lambda item: item[1],
+        signals.items(),
+        key=lambda x: x[1],
         reverse=True,
-    )[:count]
-
-
-# ============================================================
-# TELEGRAM COMMANDS
-# ============================================================
-
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        f"⚽ Welcome to GoalLogic AI v{VERSION}!\n\n"
-        "I analyze football matches using recent form, "
-        "home/away evidence, expected goals and a Poisson "
-        "score model.\n\n"
-        "Commands:\n"
-        "/team Chelsea\n"
-        "/fixtures Chelsea\n"
-        "/analyze Chelsea vs Arsenal\n"
-        "/apitest"
     )
 
 
-async def apitest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    team, error = find_team("Chelsea")
+# =========================================================
+# FORMAT STATS
+# =========================================================
 
-    if error:
-        await update.message.reply_text(
-            "🔧 FOOTBALL API TEST\n\n"
-            "❌ OpenFoot API connection failed.\n\n"
-            f"{error}"
-        )
-        return
+def format_recent_stats(name, stats, icon):
+    form = (
+        "W" * stats["wins"]
+        + "D" * stats["draws"]
+        + "L" * stats["losses"]
+    )
 
-    await update.message.reply_text(
-        "🔧 FOOTBALL API TEST\n\n"
-        "✅ OpenFoot API connection works.\n"
-        f"✅ Found Chelsea.\n"
-        f"Team ID: {team_id(team)}"
+    return (
+        f"{icon} {name} recent:\n"
+        f"{form} | "
+        f"W/D/L {stats['wins']}/{stats['draws']}/{stats['losses']} "
+        f"| GF{stats['gf']} GA{stats['ga']}\n"
+        f"Avg {stats['avg_gf']:.2f}/{stats['avg_ga']:.2f} "
+        f"| O1.5 {stats['o15']}% "
+        f"| O2.5 {stats['o25']}% "
+        f"| U3.5 {stats['u35']}% "
+        f"| BTTS {stats['btts']}%\n"
+        f"Scoring {stats['scoring']}% "
+        f"| CS {stats['clean_sheet']}%"
     )
 
 
-async def team_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text(
-            "Usage:\n/team Chelsea"
-        )
-        return
+# =========================================================
+# ANALYSIS
+# =========================================================
 
-    query = " ".join(context.args)
+def analyze_match(home_team, away_team):
+    home_matches_raw = get_team_matches(home_team)
+    away_matches_raw = get_team_matches(away_team)
 
-    results, error = search_team(query)
+    home_tid = team_id(home_team)
+    away_tid = team_id(away_team)
 
-    if error:
-        await update.message.reply_text(
-            f"❌ {error}"
-        )
-        return
+    home_oriented = []
 
-    if not results:
-        await update.message.reply_text(
-            f"❌ No team found for '{query}'."
-        )
-        return
+    for match in home_matches_raw:
+        item = orient_match(match, home_tid)
 
-    lines = [
-        f"🔎 Team search: {query}",
-        "",
-    ]
+        if item:
+            home_oriented.append(item)
 
-    for item in results[:10]:
-        lines.append(
-            f"• {team_name(item)}"
-            f" — ID: {team_id(item)}"
-        )
+    away_oriented = []
 
-    await update.message.reply_text(
-        "\n".join(lines)
-    )
+    for match in away_matches_raw:
+        item = orient_match(match, away_tid)
 
-
-async def fixtures_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text(
-            "Usage:\n/fixtures Chelsea"
-        )
-        return
-
-    query = " ".join(context.args)
-
-    team, error = find_team(query)
-
-    if error:
-        await update.message.reply_text(
-            f"❌ {error}"
-        )
-        return
-
-    matches, error = get_team_matches(team)
-
-    if error:
-        await update.message.reply_text(
-            f"❌ {error}"
-        )
-        return
-
-    oriented = team_oriented_matches(
-        team,
-        matches,
-    )
-
-    if not oriented:
-        await update.message.reply_text(
-            f"❌ No completed {SEASON} matches found "
-            f"for {team_name(team)}."
-        )
-        return
-
-    recent = oriented[:SAMPLE_SIZE]
-
-    lines = [
-        f"📅 {team_name(team)}",
-        f"Season: {SEASON}",
-        f"Showing last {len(recent)} completed matches",
-        "",
-    ]
-
-    for item in recent:
-        match = item["match"]
-
-        date = str(
-            match.get("kickoffAt")
-            or match.get("date")
-            or match.get("kickoff")
-            or ""
-        )
-
-        date = date[:10]
-
-        lines.append(
-            f"{date} | {item['venue']} | "
-            f"{item['result']} | "
-            f"{int(item['gf'])}-{int(item['ga'])} "
-            f"vs {item['opponent']}"
-        )
-
-    await update.message.reply_text(
-        "\n".join(lines)
-    )
-
-
-def parse_analyze_command(text):
-    raw = text.strip()
-
-    if raw.lower().startswith("/analyze"):
-        raw = raw[len("/analyze"):].strip()
-
-    # Case-insensitive VS parsing
-    import re
-
-    parts = re.split(
-        r"\s+vs\.?\s+",
-        raw,
-        flags=re.IGNORECASE,
-    )
-
-    if len(parts) != 2:
-        return None, None
-
-    home = parts[0].strip()
-    away = parts[1].strip()
-
-    if not home or not away:
-        return None, None
-
-    return home, away
-
-
-async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text or ""
-
-    home_query, away_query = parse_analyze_command(text)
-
-    if not home_query or not away_query:
-        await update.message.reply_text(
-            "Usage:\n"
-            "/analyze Chelsea vs Arsenal"
-        )
-        return
-
-    home_team, error = find_team(home_query)
-
-    if error:
-        await update.message.reply_text(
-            f"❌ Home team error:\n{error}"
-        )
-        return
-
-    away_team, error = find_team(away_query)
-
-    if error:
-        await update.message.reply_text(
-            f"❌ Away team error:\n{error}"
-        )
-        return
-
-    home_matches, error = get_team_matches(home_team)
-
-    if error:
-        await update.message.reply_text(
-            f"❌ Could not retrieve "
-            f"{team_name(home_team)} data.\n\n{error}"
-        )
-        return
-
-    away_matches, error = get_team_matches(away_team)
-
-    if error:
-        await update.message.reply_text(
-            f"❌ Could not retrieve "
-            f"{team_name(away_team)} data.\n\n{error}"
-        )
-        return
-
-    home_oriented = team_oriented_matches(
-        home_team,
-        home_matches,
-    )
-
-    away_oriented = team_oriented_matches(
-        away_team,
-        away_matches,
-    )
-
-    if not home_oriented:
-        await update.message.reply_text(
-            f"❌ No recent {SEASON} data found for "
-            f"{team_name(home_team)}."
-        )
-        return
-
-    if not away_oriented:
-        await update.message.reply_text(
-            f"❌ No recent {SEASON} data found for "
-            f"{team_name(away_team)}."
-        )
-        return
+        if item:
+            away_oriented.append(item)
 
     home_recent = home_oriented[:SAMPLE_SIZE]
     away_recent = away_oriented[:SAMPLE_SIZE]
 
-    home_venue = [
-        m for m in home_oriented
-        if m["venue"] == "HOME"
-    ][:SAMPLE_SIZE]
+    if not home_recent:
+        return (
+            f"❌ No recent {SEASON} data found for "
+            f"{team_name(home_team)}."
+        )
 
-    away_venue = [
-        m for m in away_oriented
-        if m["venue"] == "AWAY"
-    ][:SAMPLE_SIZE]
+    if not away_recent:
+        return (
+            f"❌ No recent {SEASON} data found for "
+            f"{team_name(away_team)}."
+        )
 
-    home_stats = calculate_stats(home_recent)
-    away_stats = calculate_stats(away_recent)
+    home_recent_stats = calculate_stats(home_recent)
+    away_recent_stats = calculate_stats(away_recent)
 
-    home_venue_stats = calculate_stats(home_venue)
-    away_venue_stats = calculate_stats(away_venue)
+    home_venue_matches = filter_venue(
+        home_oriented,
+        "HOME",
+    )[:SAMPLE_SIZE]
 
-    home_xg, away_xg = estimate_xg(
-        home_recent,
-        away_recent,
-        home_venue,
-        away_venue,
+    away_venue_matches = filter_venue(
+        away_oriented,
+        "AWAY",
+    )[:SAMPLE_SIZE]
+
+    home_venue_stats = calculate_stats(
+        home_venue_matches
     )
 
-    matrix = build_score_matrix(
+    away_venue_stats = calculate_stats(
+        away_venue_matches
+    )
+
+    # Model-estimated xG
+    home_xg = estimate_xg(
+        home_recent_stats,
+        home_venue_stats,
+        away_venue_stats,
+    )
+
+    away_xg = estimate_xg(
+        away_recent_stats,
+        away_venue_stats,
+        home_venue_stats,
+    )
+
+    matrix = build_poisson_matrix(
         home_xg,
         away_xg,
         max_goals=8,
     )
 
-    model = matrix_markets(matrix)
+    markets = matrix_markets(matrix)
 
     scorelines = top_scorelines(
         matrix,
         count=3,
     )
 
-    signals = top_signals(
-        model,
-        count=3,
+    data_strength = calculate_data_strength(
+        len(home_recent),
+        len(away_recent),
+        len(home_venue_matches),
+        len(away_venue_matches),
     )
 
-    strength = data_strength(
-        home_recent,
-        away_recent,
-        home_venue,
-        away_venue,
+    confidence = calculate_model_confidence(
+        data_strength,
+        markets,
     )
 
-    confidence = confidence_label(strength)
+    consistency = probability_audit(
+        markets
+    )
 
-    # ========================================================
-    # BUILD RESPONSE
-    # ========================================================
+    top_signals = get_top_signals(markets)
 
-    home_name = team_name(home_team)
-    away_name = team_name(away_team)
+    # Primary signal
+    primary_name, primary_probability = top_signals[0]
+
+    # Prevent weak signals from being presented as strong.
+    if primary_probability < 0.60:
+        primary_signal = "No strong model signal"
+    else:
+        primary_signal = (
+            f"{primary_name} "
+            f"{primary_probability * 100:.0f}%"
+        )
+
+    quality_label = "🟢 HIGH"
+
+    if confidence < 65:
+        quality_label = "🟡 MODERATE"
+    elif confidence < 75:
+        quality_label = "🟡 GOOD"
 
     lines = []
 
     lines.append(
         f"⚽ GOALLOGIC AI v{VERSION}"
     )
-
     lines.append("")
     lines.append(
-        f"🏟️ {home_name} vs {away_name}"
+        f"🏟️ {team_name(home_team)} vs "
+        f"{team_name(away_team)}"
     )
-
     lines.append("")
     lines.append(
         f"Season: {SEASON}"
     )
-
     lines.append(
         f"Sample: Last {SAMPLE_SIZE} available matches"
     )
+    lines.append("")
 
-    # --------------------------------------------------------
-    # HOME RECENT
-    # --------------------------------------------------------
+    lines.append(
+        format_recent_stats(
+            team_name(home_team),
+            home_recent_stats,
+            "🏠",
+        )
+    )
 
     lines.append("")
-    lines.append(
-        f"🏠 {home_name} recent:"
-    )
 
     lines.append(
-        f"{recent_form_string(home_recent)} | "
-        f"W/D/L "
-        f"{home_stats['wins']}/"
-        f"{home_stats['draws']}/"
-        f"{home_stats['losses']} | "
-        f"GF{int(home_stats['gf'])} "
-        f"GA{int(home_stats['ga'])}"
+        format_recent_stats(
+            team_name(away_team),
+            away_recent_stats,
+            "✈️",
+        )
     )
-
-    lines.append(
-        f"Avg {home_stats['avg_gf']:.2f}/"
-        f"{home_stats['avg_ga']:.2f} | "
-        f"O1.5 {pct(home_stats['over15'])}% | "
-        f"O2.5 {pct(home_stats['over25'])}% | "
-        f"U3.5 {pct(home_stats['under35'])}% | "
-        f"BTTS {pct(home_stats['btts'])}%"
-    )
-
-    lines.append(
-        f"Scoring {pct(home_stats['scoring'])}% | "
-        f"CS {pct(home_stats['clean_sheet'])}%"
-    )
-
-    # --------------------------------------------------------
-    # AWAY RECENT
-    # --------------------------------------------------------
 
     lines.append("")
-    lines.append(
-        f"✈️ {away_name} recent:"
-    )
 
     lines.append(
-        f"{recent_form_string(away_recent)} | "
-        f"W/D/L "
-        f"{away_stats['wins']}/"
-        f"{away_stats['draws']}/"
-        f"{away_stats['losses']} | "
-        f"GF{int(away_stats['gf'])} "
-        f"GA{int(away_stats['ga'])}"
-    )
-
-    lines.append(
-        f"Avg {away_stats['avg_gf']:.2f}/"
-        f"{away_stats['avg_ga']:.2f} | "
-        f"O1.5 {pct(away_stats['over15'])}% | "
-        f"O2.5 {pct(away_stats['over25'])}% | "
-        f"U3.5 {pct(away_stats['under35'])}% | "
-        f"BTTS {pct(away_stats['btts'])}%"
-    )
-
-    lines.append(
-        f"Scoring {pct(away_stats['scoring'])}% | "
-        f"CS {pct(away_stats['clean_sheet'])}%"
-    )
-
-    # --------------------------------------------------------
-    # VENUE
-    # --------------------------------------------------------
-
-    lines.append("")
-    lines.append(
-        f"🏟️ {home_name} HOME:"
+        f"🏟️ {team_name(home_team)} HOME:"
     )
 
     lines.append(
@@ -1314,13 +1015,14 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     lines.append(
-        f"Scoring {pct(home_venue_stats['scoring'])}% | "
-        f"CS {pct(home_venue_stats['clean_sheet'])}%"
+        f"Scoring {home_venue_stats['scoring']}% "
+        f"| CS {home_venue_stats['clean_sheet']}%"
     )
 
     lines.append("")
+
     lines.append(
-        f"✈️ {away_name} AWAY:"
+        f"✈️ {team_name(away_team)} AWAY:"
     )
 
     lines.append(
@@ -1335,176 +1037,430 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     lines.append(
-        f"Scoring {pct(away_venue_stats['scoring'])}% | "
-        f"CS {pct(away_venue_stats['clean_sheet'])}%"
+        f"Scoring {away_venue_stats['scoring']}% "
+        f"| CS {away_venue_stats['clean_sheet']}%"
     )
 
-    # --------------------------------------------------------
-    # XG
-    # --------------------------------------------------------
-
     lines.append("")
+
     lines.append(
         "📊 EXPECTED GOALS MODEL"
     )
 
     lines.append(
-        f"{home_name}: {home_xg:.2f} xG"
+        f"{team_name(home_team)}: "
+        f"{home_xg:.2f} xG"
     )
 
     lines.append(
-        f"{away_name}: {away_xg:.2f} xG"
+        f"{team_name(away_team)}: "
+        f"{away_xg:.2f} xG"
     )
 
     lines.append(
-        f"Total: {home_xg + away_xg:.2f} xG"
+        f"Total: "
+        f"{home_xg + away_xg:.2f} xG"
     )
-
-    # --------------------------------------------------------
-    # RESULT
-    # --------------------------------------------------------
 
     lines.append("")
-    lines.append(
-        "🎯 RESULT MODEL"
-    )
+
+    lines.append("🎯 RESULT MODEL")
 
     lines.append(
-        f"1: {pct(model['home_win'])}% | "
-        f"X: {pct(model['draw'])}% | "
-        f"2: {pct(model['away_win'])}%"
+        f"1: {markets['home_win'] * 100:.0f}% "
+        f"| X: {markets['draw'] * 100:.0f}% "
+        f"| 2: {markets['away_win'] * 100:.0f}%"
     )
-
-    # --------------------------------------------------------
-    # MARKETS
-    # --------------------------------------------------------
 
     lines.append("")
+
+    lines.append("📈 MARKET MODEL")
+
     lines.append(
-        "📈 MARKET MODEL"
+        f"1X: {markets['1x'] * 100:.0f}%"
     )
 
     lines.append(
-        f"1X: {pct(model['double_home'])}%"
+        f"X2: {markets['x2'] * 100:.0f}%"
     )
 
     lines.append(
-        f"X2: {pct(model['double_away'])}%"
+        f"Over 0.5: {markets['over05'] * 100:.0f}%"
     )
 
     lines.append(
-        f"Over 0.5: {pct(model['over05'])}%"
+        f"Over 1.5: {markets['over15'] * 100:.0f}%"
     )
 
     lines.append(
-        f"Over 1.5: {pct(model['over15'])}%"
+        f"Over 2.5: {markets['over25'] * 100:.0f}%"
     )
 
     lines.append(
-        f"Over 2.5: {pct(model['over25'])}%"
+        f"Under 3.5: {markets['under35'] * 100:.0f}%"
     )
 
     lines.append(
-        f"Under 3.5: {pct(model['under35'])}%"
+        f"Under 4.5: {markets['under45'] * 100:.0f}%"
     )
 
     lines.append(
-        f"Under 4.5: {pct(model['under45'])}%"
+        f"BTTS: {markets['btts'] * 100:.0f}%"
     )
 
     lines.append(
-        f"BTTS: {pct(model['btts'])}%"
+        f"Team 1 to score: "
+        f"{markets['home_score'] * 100:.0f}%"
     )
 
     lines.append(
-        f"Team 1 to score: {pct(model['home_score'])}%"
+        f"Team 2 to score: "
+        f"{markets['away_score'] * 100:.0f}%"
     )
-
-    lines.append(
-        f"Team 2 to score: {pct(model['away_score'])}%"
-    )
-
-    # --------------------------------------------------------
-    # SCORELINES
-    # --------------------------------------------------------
 
     lines.append("")
-    lines.append(
-        "🥅 TOP SCORELINES"
-    )
 
-    for (hg, ag), probability in scorelines:
+    lines.append("🥅 TOP SCORELINES")
+
+    for (h, a), p in scorelines:
         lines.append(
-            f"{int(hg)}-{int(ag)}: "
-            f"{pct(probability * 100)}%"
+            f"{h}-{a}: {p * 100:.0f}%"
         )
 
-    # --------------------------------------------------------
-    # TOP SIGNALS
-    # --------------------------------------------------------
-
     lines.append("")
+
+    lines.append("⚽ GOAL DISTRIBUTION")
+
     lines.append(
-        "🔥 TOP MODEL SIGNALS"
+        format_goal_distribution(matrix)
     )
 
-    for market, probability in signals:
+    lines.append(
+        "0 / 1 / 2 / 3 / 4 / 5+ goals"
+    )
+
+    lines.append("")
+
+    lines.append("🔥 TOP MODEL SIGNALS")
+
+    for name, probability in top_signals[:3]:
+
+        if probability >= 0.75:
+            emoji = "🟢"
+        elif probability >= 0.65:
+            emoji = "🟡"
+        else:
+            emoji = "⚪"
+
         lines.append(
-            f"🟢 {market} "
-            f"{pct(probability)}%"
+            f"{emoji} {name} "
+            f"{probability * 100:.0f}%"
         )
 
-    # --------------------------------------------------------
-    # MODEL QUALITY
-    # --------------------------------------------------------
+    lines.append("")
+
+    lines.append("🧠 MODEL QUALITY")
+
+    lines.append(
+        f"Data strength: {data_strength}%"
+    )
+
+    lines.append(
+        "Probability consistency: "
+        + ("✅ PASS" if consistency else "❌ CHECK")
+    )
+
+    lines.append(
+        f"Model confidence: "
+        f"{quality_label} {confidence}%"
+    )
 
     lines.append("")
-    lines.append(
-        "🧠 MODEL QUALITY"
-    )
 
-    lines.append(
-        f"Data strength: {pct(strength)}%"
-    )
-
-    lines.append(
-        "Probability consistency: ✅ PASS"
-    )
-
-    lines.append(
-        f"Model confidence: 🟢 "
-        f"{pct(strength * 0.85)}% "
-        f"({confidence})"
-    )
-
-    # --------------------------------------------------------
-    # PRIMARY SIGNAL
-    # --------------------------------------------------------
-
-    primary_market, primary_probability = signals[0]
-
-    lines.append("")
     lines.append(
         f"📌 PRIMARY MODEL SIGNAL: "
-        f"{primary_market} "
-        f"{pct(primary_probability)}%"
+        f"{primary_signal}"
     )
 
     lines.append("")
+
     lines.append(
         "ℹ️ Probabilities are mathematical model "
         "estimates from recent data, venue evidence "
-        "and a Poisson score model. They are not guarantees."
+        "and a Poisson score model. They are not "
+        "guarantees."
     )
+
+    return "\n".join(lines)
+
+
+# =========================================================
+# TELEGRAM COMMANDS
+# =========================================================
+
+async def start_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    message = (
+        f"⚽ Welcome to GoalLogic AI v{VERSION}!\n\n"
+        "I analyze football matches using recent form, "
+        "home/away evidence, model-estimated xG and "
+        "a Poisson score model.\n\n"
+        "Commands:\n"
+        "/team Chelsea\n"
+        "/fixtures Chelsea\n"
+        "/analyze Chelsea vs Arsenal\n"
+        "/apitest"
+    )
+
+    await update.message.reply_text(message)
+
+
+async def apitest_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    data = api_get(
+        "search",
+        {"q": "Chelsea"},
+    )
+
+    if not data:
+        await update.message.reply_text(
+            "❌ OpenFoot API connection failed."
+        )
+        return
+
+    team = find_team("Chelsea")
+
+    if not team:
+        await update.message.reply_text(
+            "⚠️ API connected, but Chelsea was not found."
+        )
+        return
+
+    await update.message.reply_text(
+        "🔧 FOOTBALL API TEST\n\n"
+        "OpenFoot API connection works.\n"
+        "Found Chelsea.\n"
+        f"Team ID: {team_id(team)}"
+    )
+
+
+async def team_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    if not context.args:
+        await update.message.reply_text(
+            "Usage:\n/team Chelsea"
+        )
+        return
+
+    query = " ".join(context.args)
+
+    data = api_get(
+        "search",
+        {"q": query},
+    )
+
+    if not data:
+        await update.message.reply_text(
+            "❌ Team search failed."
+        )
+        return
+
+    teams = data.get("data", [])
+
+    if not teams:
+        await update.message.reply_text(
+            f"❌ No teams found for: {query}"
+        )
+        return
+
+    lines = [
+        f"🔎 Team search: {query}",
+        "",
+    ]
+
+    for team in teams[:10]:
+        lines.append(
+            f"⚽ {team_name(team)}"
+        )
+        lines.append(
+            f"ID: {team_id(team)}"
+        )
+
+        country = team.get("country")
+
+        if country:
+            lines.append(
+                f"Country: {country}"
+            )
+
+        lines.append("")
 
     await update.message.reply_text(
         "\n".join(lines)
     )
 
 
-# ============================================================
+async def fixtures_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    if not context.args:
+        await update.message.reply_text(
+            "Usage:\n/fixtures Chelsea"
+        )
+        return
+
+    query = " ".join(context.args)
+
+    team = find_team(query)
+
+    if not team:
+        await update.message.reply_text(
+            f"❌ Team not found: {query}"
+        )
+        return
+
+    matches_raw = get_team_matches(team)
+
+    tid = team_id(team)
+
+    oriented = []
+
+    for match in matches_raw:
+        item = orient_match(match, tid)
+
+        if item:
+            oriented.append(item)
+
+    oriented = oriented[:SAMPLE_SIZE]
+
+    if not oriented:
+        await update.message.reply_text(
+            f"❌ No completed {SEASON} matches "
+            f"found for {team_name(team)}."
+        )
+        return
+
+    lines = [
+        f"📅 {team_name(team)}",
+        f"Season: {SEASON}",
+        f"Showing last {len(oriented)} completed matches",
+        "",
+    ]
+
+    for item in oriented:
+
+        result = (
+            "W"
+            if item["goals_for"] > item["goals_against"]
+            else "D"
+            if item["goals_for"] == item["goals_against"]
+            else "L"
+        )
+
+        lines.append(
+            f"{item['date']} | "
+            f"{item['venue']} | "
+            f"{result} | "
+            f"{item['goals_for']}-{item['goals_against']} "
+            f"vs {item['opponent']}"
+        )
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
+
+async def analyze_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    if not context.args:
+        await update.message.reply_text(
+            "Usage:\n/analyze Chelsea vs Arsenal"
+        )
+        return
+
+    text = " ".join(context.args)
+
+    if " vs " in text.lower():
+        parts = text.lower().split(" vs ", 1)
+
+        # Recover original capitalization from args.
+        original = " ".join(context.args)
+
+        separator_index = original.lower().find(" vs ")
+
+        home_query = original[:separator_index].strip()
+        away_query = original[
+            separator_index + 4:
+        ].strip()
+
+    else:
+        await update.message.reply_text(
+            "❌ Please use:\n"
+            "/analyze Chelsea vs Arsenal"
+        )
+        return
+
+    if not home_query or not away_query:
+        await update.message.reply_text(
+            "❌ Please provide two teams.\n"
+            "Example:\n"
+            "/analyze Chelsea vs Arsenal"
+        )
+        return
+
+    home_team = find_team(home_query)
+    away_team = find_team(away_query)
+
+    if not home_team:
+        await update.message.reply_text(
+            f"❌ Team not found: {home_query}"
+        )
+        return
+
+    if not away_team:
+        await update.message.reply_text(
+            f"❌ Team not found: {away_query}"
+        )
+        return
+
+    await update.message.reply_text(
+        "🔎 Analyzing match...\n"
+        "Please wait."
+    )
+
+    try:
+        result = analyze_match(
+            home_team,
+            away_team,
+        )
+
+        await update.message.reply_text(
+            result
+        )
+
+    except Exception as e:
+        print(
+            f"Analysis error: {e}"
+        )
+
+        await update.message.reply_text(
+            "❌ Analysis failed.\n"
+            "Please try again."
+        )
+
+
+# =========================================================
 # MAIN
-# ============================================================
+# =========================================================
 
 def main():
     if not TELEGRAM_BOT_TOKEN:
@@ -1524,11 +1480,6 @@ def main():
 
     health_thread.start()
 
-    print(
-        f"GoalLogic AI v{VERSION} "
-        "Telegram bot is starting."
-    )
-
     application = (
         Application.builder()
         .token(TELEGRAM_BOT_TOKEN)
@@ -1536,23 +1487,43 @@ def main():
     )
 
     application.add_handler(
-        CommandHandler("start", start_command)
+        CommandHandler(
+            "start",
+            start_command,
+        )
     )
 
     application.add_handler(
-        CommandHandler("apitest", apitest_command)
+        CommandHandler(
+            "apitest",
+            apitest_command,
+        )
     )
 
     application.add_handler(
-        CommandHandler("team", team_command)
+        CommandHandler(
+            "team",
+            team_command,
+        )
     )
 
     application.add_handler(
-        CommandHandler("fixtures", fixtures_command)
+        CommandHandler(
+            "fixtures",
+            fixtures_command,
+        )
     )
 
     application.add_handler(
-        CommandHandler("analyze", analyze_command)
+        CommandHandler(
+            "analyze",
+            analyze_command,
+        )
+    )
+
+    print(
+        f"GoalLogic AI v{VERSION} "
+        "Telegram bot is starting."
     )
 
     application.run_polling(
