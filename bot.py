@@ -40,7 +40,6 @@ class HealthHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
-
         self.wfile.write(
             f"GoalLogic AI v{VERSION} is running.".encode()
         )
@@ -100,10 +99,13 @@ def api_get(endpoint, params=None):
 
                 error = payload.get("error", {})
 
-                message = error.get(
-                    "message",
-                    f"HTTP {response.status_code}"
-                )
+                if isinstance(error, dict):
+                    message = error.get(
+                        "message",
+                        f"HTTP {response.status_code}"
+                    )
+                else:
+                    message = str(error)
 
             except Exception:
 
@@ -156,6 +158,27 @@ def team_id(team):
     )
 
 
+def safe_number(value):
+
+    if isinstance(value, bool):
+        return None
+
+    if isinstance(value, int):
+        return value
+
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+
+    if isinstance(value, str):
+
+        value = value.strip()
+
+        if value.isdigit():
+            return int(value)
+
+    return None
+
+
 # ============================================================
 # TEAM SEARCH
 # ============================================================
@@ -177,9 +200,10 @@ def search_team(query):
 
     if isinstance(data, dict):
 
-        data = data.get(
-            "teams",
-            data.get("results", [])
+        data = (
+            data.get("teams")
+            or data.get("results")
+            or []
         )
 
     if not isinstance(data, list):
@@ -204,26 +228,18 @@ def find_team(query):
 
     wanted = clean_name(query)
 
-    # Exact match first
+    # Exact match
     for team in teams:
 
-        name = clean_name(
-            team_name(team)
-        )
-
-        if name == wanted:
-
+        if clean_name(team_name(team)) == wanted:
             return team, None
 
     # Contains match
     for team in teams:
 
-        name = clean_name(
-            team_name(team)
-        )
+        name = clean_name(team_name(team))
 
         if wanted in name or name in wanted:
-
             return team, None
 
     return teams[0], None
@@ -233,89 +249,63 @@ def find_team(query):
 # SCORE EXTRACTION
 # ============================================================
 
-def extract_score_value(value):
-
-    if isinstance(value, bool):
-        return None
-
-    if isinstance(value, int):
-        return value
-
-    if isinstance(value, float):
-
-        if value.is_integer():
-            return int(value)
-
-        return None
-
-    if isinstance(value, str):
-
-        value = value.strip()
-
-        if value.isdigit():
-            return int(value)
-
-    return None
-
-
 def extract_scores(match):
 
     if not isinstance(match, dict):
-
         return None, None
 
-    # --------------------------------------------------------
     # Direct fields
-    # --------------------------------------------------------
-
-    direct_pairs = [
+    pairs = [
         ("homeScore", "awayScore"),
         ("homeGoals", "awayGoals"),
         ("home_score", "away_score"),
         ("home_goals", "away_goals"),
     ]
 
-    for home_key, away_key in direct_pairs:
+    for home_key, away_key in pairs:
 
-        h = extract_score_value(
+        home_score = safe_number(
             match.get(home_key)
         )
 
-        a = extract_score_value(
+        away_score = safe_number(
             match.get(away_key)
         )
 
-        if h is not None and a is not None:
+        if (
+            home_score is not None
+            and away_score is not None
+        ):
+            return home_score, away_score
 
-            return h, a
-
-    # --------------------------------------------------------
-    # Nested score
-    # --------------------------------------------------------
-
+    # Nested score object
     score = match.get("score")
 
     if isinstance(score, dict):
 
-        for home_key, away_key in [
+        pairs = [
             ("home", "away"),
             ("homeScore", "awayScore"),
             ("homeGoals", "awayGoals"),
             ("home_score", "away_score"),
             ("home_goals", "away_goals"),
-        ]:
+        ]
 
-            h = extract_score_value(
+        for home_key, away_key in pairs:
+
+            home_score = safe_number(
                 score.get(home_key)
             )
 
-            a = extract_score_value(
+            away_score = safe_number(
                 score.get(away_key)
             )
 
-            if h is not None and a is not None:
-
-                return h, a
+            if (
+                home_score is not None
+                and away_score is not None
+            ):
+                return home_score, away_score
 
         home_obj = score.get("home")
         away_obj = score.get("away")
@@ -325,56 +315,56 @@ def extract_scores(match):
             and isinstance(away_obj, dict)
         ):
 
-            for hk, ak in [
-                ("score", "score"),
-                ("goals", "goals"),
-                ("current", "current"),
-                ("fullTime", "fullTime"),
+            for key in [
+                "score",
+                "goals",
+                "current",
+                "fullTime",
             ]:
 
-                h = extract_score_value(
-                    home_obj.get(hk)
+                home_score = safe_number(
+                    home_obj.get(key)
                 )
 
-                a = extract_score_value(
-                    away_obj.get(ak)
+                away_score = safe_number(
+                    away_obj.get(key)
                 )
 
-                if h is not None and a is not None:
+                if (
+                    home_score is not None
+                    and away_score is not None
+                ):
+                    return home_score, away_score
 
-                    return h, a
-
-    # --------------------------------------------------------
     # Scores object
-    # --------------------------------------------------------
-
     scores = match.get("scores")
 
     if isinstance(scores, dict):
 
-        for home_key, away_key in [
+        pairs = [
             ("home", "away"),
             ("homeScore", "awayScore"),
             ("homeGoals", "awayGoals"),
             ("home_score", "away_score"),
-        ]:
+        ]
 
-            h = extract_score_value(
+        for home_key, away_key in pairs:
+
+            home_score = safe_number(
                 scores.get(home_key)
             )
 
-            a = extract_score_value(
+            away_score = safe_number(
                 scores.get(away_key)
             )
 
-            if h is not None and a is not None:
+            if (
+                home_score is not None
+                and away_score is not None
+            ):
+                return home_score, away_score
 
-                return h, a
-
-    # --------------------------------------------------------
     # Team objects
-    # --------------------------------------------------------
-
     home_team = match.get("homeTeam", {})
     away_team = match.get("awayTeam", {})
 
@@ -383,29 +373,26 @@ def extract_scores(match):
         and isinstance(away_team, dict)
     ):
 
-        for home_key, away_key in [
-            ("score", "score"),
-            ("goals", "goals"),
-            ("homeScore", "awayScore"),
-            ("homeGoals", "awayGoals"),
+        for key in [
+            "score",
+            "goals",
         ]:
 
-            h = extract_score_value(
-                home_team.get(home_key)
+            home_score = safe_number(
+                home_team.get(key)
             )
 
-            a = extract_score_value(
-                away_team.get(away_key)
+            away_score = safe_number(
+                away_team.get(key)
             )
 
-            if h is not None and a is not None:
+            if (
+                home_score is not None
+                and away_score is not None
+            ):
+                return home_score, away_score
 
-                return h, a
-
-    # --------------------------------------------------------
     # Result object
-    # --------------------------------------------------------
-
     result = match.get("result")
 
     if isinstance(result, dict):
@@ -416,23 +403,25 @@ def extract_scores(match):
             ("homeGoals", "awayGoals"),
         ]:
 
-            h = extract_score_value(
+            home_score = safe_number(
                 result.get(home_key)
             )
 
-            a = extract_score_value(
+            away_score = safe_number(
                 result.get(away_key)
             )
 
-            if h is not None and a is not None:
-
-                return h, a
+            if (
+                home_score is not None
+                and away_score is not None
+            ):
+                return home_score, away_score
 
     return None, None
 
 
 # ============================================================
-# MATCH STATUS
+# MATCH HELPERS
 # ============================================================
 
 def get_status(match):
@@ -446,10 +435,6 @@ def get_status(match):
         or ""
     ).strip().lower()
 
-
-# ============================================================
-# MATCH DATE
-# ============================================================
 
 def match_datetime(match):
 
@@ -468,12 +453,12 @@ def match_datetime(match):
 
     try:
 
-        text = str(raw).replace(
-            "Z",
-            "+00:00"
+        return datetime.fromisoformat(
+            str(raw).replace(
+                "Z",
+                "+00:00"
+            )
         )
-
-        return datetime.fromisoformat(text)
 
     except Exception:
 
@@ -481,7 +466,7 @@ def match_datetime(match):
 
 
 # ============================================================
-# TEAM MATCHES
+# GET TEAM MATCHES
 # ============================================================
 
 def get_team_matches(team_id_value):
@@ -532,9 +517,6 @@ def get_team_matches(team_id_value):
             {}
         )
 
-        home_id = team_id(home_team)
-        away_id = team_id(away_team)
-
         home_score, away_score = extract_scores(
             match
         )
@@ -549,7 +531,9 @@ def get_team_matches(team_id_value):
 
         if status in {
             "scheduled",
+            "upcoming",
             "live",
+            "inplay",
             "postponed",
             "cancelled",
             "canceled",
@@ -559,19 +543,23 @@ def get_team_matches(team_id_value):
         completed.append({
             "id": match.get("id"),
             "status": status or "finished",
-            "kickoffAt": match.get("kickoffAt"),
+            "kickoffAt": (
+                match.get("kickoffAt")
+                or match.get("date")
+                or match.get("startTime")
+                or match.get("utcDate")
+            ),
             "homeTeam": home_team,
             "awayTeam": away_team,
             "_home_score": home_score,
             "_away_score": away_score,
-            "_home_id": home_id,
-            "_away_id": away_id,
         })
 
     completed.sort(
-        key=lambda x:
-        match_datetime(x)
-        or datetime.min,
+        key=lambda item: (
+            match_datetime(item)
+            or datetime.min
+        ),
         reverse=True
     )
 
@@ -606,19 +594,11 @@ def team_oriented_matches(team, matches):
         home_id = team_id(home)
         away_id = team_id(away)
 
-        is_home = False
-
-        if (
-            target_id
-            and home_id == target_id
-        ):
+        if target_id and home_id == target_id:
 
             is_home = True
 
-        elif (
-            target_id
-            and away_id == target_id
-        ):
+        elif target_id and away_id == target_id:
 
             is_home = False
 
@@ -644,28 +624,31 @@ def team_oriented_matches(team, matches):
 
                 continue
 
-        hs = match.get(
+        home_score = match.get(
             "_home_score"
         )
 
-        aws = match.get(
+        away_score = match.get(
             "_away_score"
         )
 
-        if hs is None or aws is None:
+        if (
+            home_score is None
+            or away_score is None
+        ):
             continue
 
         if is_home:
 
-            gf = hs
-            ga = aws
+            gf = home_score
+            ga = away_score
             venue = "HOME"
             opponent = team_name(away)
 
         else:
 
-            gf = aws
-            ga = hs
+            gf = away_score
+            ga = home_score
             venue = "AWAY"
             opponent = team_name(home)
 
@@ -679,9 +662,7 @@ def team_oriented_matches(team, matches):
             result_code = "L"
 
         result.append({
-            "date": match.get(
-                "kickoffAt"
-            ),
+            "date": match.get("kickoffAt"),
             "venue": venue,
             "opponent": opponent,
             "gf": gf,
@@ -689,28 +670,15 @@ def team_oriented_matches(team, matches):
             "result": result_code,
         })
 
-    def sort_date(item):
-
-        raw = item.get("date")
-
-        if not raw:
-            return datetime.min
-
-        try:
-
-            return datetime.fromisoformat(
-                str(raw).replace(
-                    "Z",
-                    "+00:00"
-                )
-            )
-
-        except Exception:
-
-            return datetime.min
-
     result.sort(
-        key=sort_date,
+        key=lambda item: (
+            match_datetime(
+                {
+                    "kickoffAt": item.get("date")
+                }
+            )
+            or datetime.min
+        ),
         reverse=True
     )
 
@@ -895,6 +863,8 @@ def poisson_markets(
     over15 = 0.0
     over25 = 0.0
     under35 = 0.0
+    under45 = 0.0
+    over05 = 0.0
     btts = 0.0
 
     home_score = 0.0
@@ -922,31 +892,31 @@ def poisson_markets(
 
             away_win += probability
 
-        if total_goals >= 2:
+        if total_goals >= 1:
+            over05 += probability
 
+        if total_goals >= 2:
             over15 += probability
 
         if total_goals >= 3:
-
             over25 += probability
 
         if total_goals <= 3:
-
             under35 += probability
+
+        if total_goals <= 4:
+            under45 += probability
 
         if (
             home_goals > 0
             and away_goals > 0
         ):
-
             btts += probability
 
         if home_goals > 0:
-
             home_score += probability
 
         if away_goals > 0:
-
             away_score += probability
 
     return {
@@ -962,9 +932,11 @@ def poisson_markets(
             draw + away_win
         ) * 100,
 
+        "over05": over05 * 100,
         "over15": over15 * 100,
         "over25": over25 * 100,
         "under35": under35 * 100,
+        "under45": under45 * 100,
         "btts": btts * 100,
 
         "home_score": home_score * 100,
@@ -973,7 +945,7 @@ def poisson_markets(
 
 
 # ============================================================
-# SCORELINE PROBABILITIES
+# SCORELINES
 # ============================================================
 
 def top_scorelines(
@@ -1038,10 +1010,6 @@ def calculate_xg(
         else away_defense
     )
 
-    # v2.9 uses venue evidence more carefully.
-    # If there are only 1-2 venue matches, its influence
-    # is automatically reduced.
-
     home_venue_weight = (
         0.10
         if home_venue["games"] <= 1
@@ -1074,53 +1042,49 @@ def calculate_xg(
         else 0.34
     )
 
-    home_base = (
-        home_attack
-        * home_recent_weight
-        + away_defense
-        * 0.30
-        + home_venue_attack
-        * home_venue_weight
-        + away_venue_defense
-        * (
-            1
-            - home_recent_weight
-            - 0.30
-            - home_venue_weight
-        )
+    home_remaining = (
+        1
+        - home_recent_weight
+        - 0.30
+        - home_venue_weight
     )
 
-    away_base = (
-        away_attack
-        * away_recent_weight
-        + home_defense
-        * 0.30
-        + away_venue_attack
-        * away_venue_weight
-        + home_venue_defense
-        * (
-            1
-            - away_recent_weight
-            - 0.30
-            - away_venue_weight
-        )
+    away_remaining = (
+        1
+        - away_recent_weight
+        - 0.30
+        - away_venue_weight
+    )
+
+    home_xg = (
+        home_attack * home_recent_weight
+        + away_defense * 0.30
+        + home_venue_attack * home_venue_weight
+        + away_venue_defense * home_remaining
+    )
+
+    away_xg = (
+        away_attack * away_recent_weight
+        + home_defense * 0.30
+        + away_venue_attack * away_venue_weight
+        + home_venue_defense * away_remaining
     )
 
     home_xg = max(
         0.20,
-        min(3.50, home_base)
+        min(3.50, home_xg)
     )
 
     away_xg = max(
         0.20,
-        min(3.50, away_base)
+        min(3.50, away_xg)
     )
 
     return home_xg, away_xg
 
 
 # ============================================================
-# HISTORICAL MARKET MODEL
+# HISTORICAL MODEL
 # ============================================================
 
 def historical_markets(
@@ -1190,6 +1154,8 @@ def historical_markets(
             + away_venue_unbeaten * 0.30
         ),
 
+        "over05": 100.0,
+
         "over15": (
             home_stats["over15"]
             + away_stats["over15"]
@@ -1204,6 +1170,8 @@ def historical_markets(
             home_stats["under35"]
             + away_stats["under35"]
         ) / 2,
+
+        "under45": 100.0,
 
         "btts": (
             home_stats["btts"]
@@ -1222,12 +1190,14 @@ def historical_markets(
 
         "home_win": home_win_rate,
 
+        "draw": 50.0,
+
         "away_win": away_win_rate,
     }
 
 
 # ============================================================
-# SAMPLE CONTROL
+# SAMPLE STRENGTH
 # ============================================================
 
 def sample_strength(
@@ -1247,7 +1217,6 @@ def sample_strength(
         away_venue_games
     )
 
-    # Recent sample contributes more than venue sample.
     recent_score = min(
         1.0,
         recent_games / 5
@@ -1274,17 +1243,11 @@ def shrink_probability(
     strength
 ):
 
-    # Full strength = normal result.
-    # Weak sample = pull toward 50.
     return (
         50
         + (value - 50) * strength
     )
 
-
-# ============================================================
-# PROBABILITY BLENDING
-# ============================================================
 
 def blend_market(
     poisson_value,
@@ -1292,7 +1255,6 @@ def blend_market(
     strength
 ):
 
-    # Poisson remains dominant.
     raw = (
         poisson_value * 0.80
         + historical_value * 0.20
@@ -1320,9 +1282,11 @@ def build_markets(
     keys = [
         "1x",
         "x2",
+        "over05",
         "over15",
         "over25",
         "under35",
+        "under45",
         "btts",
         "home_score",
         "away_score",
@@ -1336,10 +1300,6 @@ def build_markets(
             strength
         )
 
-    # Keep result markets internally coherent.
-    # The result probabilities themselves come from Poisson,
-    # with only a small historical calibration.
-
     markets["home_win"] = blend_market(
         poisson["home_win"],
         historical["home_win"],
@@ -1352,15 +1312,13 @@ def build_markets(
         strength
     )
 
-    # Draw remains pure Poisson because historical draw
-    # adjustment from five games is especially noisy.
     markets["draw"] = poisson["draw"]
 
     return markets
 
 
 # ============================================================
-# MODEL DISAGREEMENT
+# MODEL QUALITY
 # ============================================================
 
 def disagreement_level(
@@ -1382,17 +1340,12 @@ def disagreement_level(
     return "LOW"
 
 
-# ============================================================
-# CONFIDENCE
-# ============================================================
-
 def model_confidence(
     signal_value,
     strength,
     disagreement
 ):
 
-    # Signal strength above 60 contributes positively.
     signal_component = max(
         0,
         min(
@@ -1401,21 +1354,23 @@ def model_confidence(
         )
     )
 
-    strength_component = strength * 100
+    strength_component = (
+        strength * 100
+    )
 
     if disagreement == "HIGH":
-        disagreement_penalty = 20
+        penalty = 20
 
     elif disagreement == "MODERATE":
-        disagreement_penalty = 10
+        penalty = 10
 
     else:
-        disagreement_penalty = 0
+        penalty = 0
 
     confidence = (
         signal_component * 0.55
         + strength_component * 0.45
-        - disagreement_penalty
+        - penalty
     )
 
     return max(
@@ -1435,43 +1390,6 @@ def confidence_label(value):
     return "LOW"
 
 
-# ============================================================
-# DISPLAY HELPERS
-# ============================================================
-
-def market_label(key):
-
-    labels = {
-
-        "1x": "1X",
-
-        "x2": "X2",
-
-        "over15": "Over 1.5",
-
-        "over25": "Over 2.5",
-
-        "under35": "Under 3.5",
-
-        "btts": "BTTS",
-
-        "home_score": "Team 1 to score",
-
-        "away_score": "Team 2 to score",
-
-        "home_win": "Team 1 win",
-
-        "draw": "Draw",
-
-        "away_win": "Team 2 win",
-    }
-
-    return labels.get(
-        key,
-        key
-    )
-
-
 def confidence_icon(value):
 
     if value >= 75:
@@ -1483,6 +1401,34 @@ def confidence_icon(value):
     return "🔴"
 
 
+# ============================================================
+# DISPLAY
+# ============================================================
+
+def market_label(key):
+
+    labels = {
+        "1x": "1X",
+        "x2": "X2",
+        "over05": "Over 0.5",
+        "over15": "Over 1.5",
+        "over25": "Over 2.5",
+        "under35": "Under 3.5",
+        "under45": "Under 4.5",
+        "btts": "BTTS",
+        "home_score": "Team 1 to score",
+        "away_score": "Team 2 to score",
+        "home_win": "Team 1 win",
+        "draw": "Draw",
+        "away_win": "Team 2 win",
+    }
+
+    return labels.get(
+        key,
+        key
+    )
+
+
 def result_string(matches):
 
     return "".join(
@@ -1492,7 +1438,7 @@ def result_string(matches):
 
 
 # ============================================================
-# COMMAND: /START
+# /START
 # ============================================================
 
 async def start_command(
@@ -1501,31 +1447,22 @@ async def start_command(
 ):
 
     text = (
-
         f"⚽ Welcome to GoalLogic AI v{VERSION}!\n\n"
-
         "I analyze football matches using recent form, "
         "home/away evidence, expected goals and a "
         "Poisson score model.\n\n"
-
         "Commands:\n"
-
         "/team Chelsea\n"
-
         "/fixtures Chelsea\n"
-
         "/analyze Chelsea vs Arsenal\n"
-
         "/apitest"
     )
 
-    await update.message.reply_text(
-        text
-    )
+    await update.message.reply_text(text)
 
 
 # ============================================================
-# COMMAND: /APITEST
+# /APITEST
 # ============================================================
 
 async def apitest_command(
@@ -1533,16 +1470,12 @@ async def apitest_command(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    teams, error = search_team(
-        "Chelsea"
-    )
+    teams, error = search_team("Chelsea")
 
     if error:
 
         await update.message.reply_text(
-
             "🔧 FOOTBALL API TEST\n\n"
-
             f"❌ API error:\n{error}"
         )
 
@@ -1551,9 +1484,7 @@ async def apitest_command(
     if not teams:
 
         await update.message.reply_text(
-
             "🔧 FOOTBALL API TEST\n\n"
-
             "❌ OpenFoot API connected, "
             "but Chelsea was not found."
         )
@@ -1563,19 +1494,15 @@ async def apitest_command(
     team = teams[0]
 
     await update.message.reply_text(
-
         "🔧 FOOTBALL API TEST\n\n"
-
         "OpenFoot API connection works.\n"
-
         "Found Chelsea.\n"
-
         f"Team ID: {team_id(team)}"
     )
 
 
 # ============================================================
-# COMMAND: /TEAM
+# /TEAM
 # ============================================================
 
 async def team_command(
@@ -1595,9 +1522,7 @@ async def team_command(
         context.args
     )
 
-    teams, error = search_team(
-        query
-    )
+    teams, error = search_team(query)
 
     if error:
 
@@ -1616,15 +1541,14 @@ async def team_command(
         return
 
     lines = [
-        f"🔎 Teams found for: {query}\n"
+        f"🔎 Teams found for: {query}",
+        ""
     ]
 
     for team in teams[:8]:
 
         lines.append(
-
             f"• {team_name(team)}\n"
-
             f"  ID: {team_id(team)}"
         )
 
@@ -1634,7 +1558,7 @@ async def team_command(
 
 
 # ============================================================
-# COMMAND: /FIXTURES
+# /FIXTURES
 # ============================================================
 
 async def fixtures_command(
@@ -1654,9 +1578,7 @@ async def fixtures_command(
         context.args
     )
 
-    team, error = find_team(
-        query
-    )
+    team, error = find_team(query)
 
     if error:
 
@@ -1673,7 +1595,6 @@ async def fixtures_command(
     if error:
 
         await update.message.reply_text(
-
             "❌ Could not retrieve matches:\n"
             f"{error}"
         )
@@ -1688,25 +1609,20 @@ async def fixtures_command(
     if not oriented:
 
         await update.message.reply_text(
-
             f"❌ No completed {SEASON} matches "
             f"found for {team_name(team)}."
         )
 
         return
 
-    sample = oriented[
-        :SAMPLE_SIZE
-    ]
+    sample = oriented[:SAMPLE_SIZE]
 
     lines = [
-
         f"📅 {team_name(team)}",
-
         f"Season: {SEASON}",
-
         f"Showing last {len(sample)} "
-        "completed matches\n",
+        "completed matches",
+        ""
     ]
 
     for match in sample:
@@ -1716,15 +1632,10 @@ async def fixtures_command(
         )[:10]
 
         lines.append(
-
             f"{date_text} | "
-
             f"{match['venue']} | "
-
             f"{match['result']} | "
-
             f"{match['gf']}-{match['ga']} "
-
             f"vs {match['opponent']}"
         )
 
@@ -1734,7 +1645,7 @@ async def fixtures_command(
 
 
 # ============================================================
-# COMMAND: /ANALYZE
+# /ANALYZE
 # ============================================================
 
 async def analyze_command(
@@ -1745,9 +1656,7 @@ async def analyze_command(
     if len(context.args) < 3:
 
         await update.message.reply_text(
-
             "Usage:\n"
-
             "/analyze Chelsea vs Arsenal"
         )
 
@@ -1757,21 +1666,26 @@ async def analyze_command(
         context.args
     )
 
-    if " vs " not in raw.lower():
+    parts = raw.split(
+        " vs ",
+        1
+    )
+
+    if len(parts) != 2:
+
+        parts = raw.split(
+            " VS ",
+            1
+        )
+
+    if len(parts) != 2:
 
         await update.message.reply_text(
-
             "❌ Use this format:\n"
-
             "/analyze Chelsea vs Arsenal"
         )
 
         return
-
-    parts = raw.lower().split(
-        " vs ",
-        1
-    )
 
     home_query = parts[0].strip()
     away_query = parts[1].strip()
@@ -1826,9 +1740,9 @@ async def analyze_command(
     if error:
 
         await update.message.reply_text(
-
             f"❌ Could not retrieve data for "
-            f"{team_name(home_team)}:\n{error}"
+            f"{team_name(home_team)}:\n"
+            f"{error}"
         )
 
         return
@@ -1840,9 +1754,9 @@ async def analyze_command(
     if error:
 
         await update.message.reply_text(
-
             f"❌ Could not retrieve data for "
-            f"{team_name(away_team)}:\n{error}"
+            f"{team_name(away_team)}:\n"
+            f"{error}"
         )
 
         return
@@ -1860,7 +1774,6 @@ async def analyze_command(
     if not home_matches:
 
         await update.message.reply_text(
-
             f"❌ No recent {SEASON} data found "
             f"for {team_name(home_team)}."
         )
@@ -1870,7 +1783,6 @@ async def analyze_command(
     if not away_matches:
 
         await update.message.reply_text(
-
             f"❌ No recent {SEASON} data found "
             f"for {team_name(away_team)}."
         )
@@ -1878,16 +1790,11 @@ async def analyze_command(
         return
 
     # --------------------------------------------------------
-    # RECENT SAMPLE
+    # RECENT
     # --------------------------------------------------------
 
-    home_recent = home_matches[
-        :SAMPLE_SIZE
-    ]
-
-    away_recent = away_matches[
-        :SAMPLE_SIZE
-    ]
+    home_recent = home_matches[:SAMPLE_SIZE]
+    away_recent = away_matches[:SAMPLE_SIZE]
 
     home_stats = calculate_stats(
         home_recent
@@ -1898,23 +1805,17 @@ async def analyze_command(
     )
 
     # --------------------------------------------------------
-    # VENUE SAMPLE
+    # VENUE
     # --------------------------------------------------------
 
     home_venue_matches = [
-
         m for m in home_matches
-
         if m["venue"] == "HOME"
-
     ][:SAMPLE_SIZE]
 
     away_venue_matches = [
-
         m for m in away_matches
-
         if m["venue"] == "AWAY"
-
     ][:SAMPLE_SIZE]
 
     home_venue = calculate_stats(
@@ -1930,72 +1831,40 @@ async def analyze_command(
     # --------------------------------------------------------
 
     home_xg, away_xg = calculate_xg(
-
         home_stats,
-
         away_stats,
-
         home_venue,
-
         away_venue
     )
 
-    total_xg = (
-        home_xg
-        + away_xg
-    )
+    total_xg = home_xg + away_xg
 
     # --------------------------------------------------------
-    # POISSON
+    # MODELS
     # --------------------------------------------------------
 
     poisson = poisson_markets(
-
         home_xg,
-
         away_xg
     )
 
-    # --------------------------------------------------------
-    # HISTORICAL
-    # --------------------------------------------------------
-
     historical = historical_markets(
-
         home_stats,
-
         away_stats,
-
         home_venue,
-
         away_venue
     )
 
-    # --------------------------------------------------------
-    # SAMPLE STRENGTH
-    # --------------------------------------------------------
-
     strength = sample_strength(
-
         home_stats["games"],
-
         away_stats["games"],
-
         home_venue["games"],
-
         away_venue["games"]
     )
 
-    # --------------------------------------------------------
-    # FINAL MARKETS
-    # --------------------------------------------------------
-
     markets = build_markets(
-
         poisson,
-
         historical,
-
         strength
     )
 
@@ -2004,53 +1873,29 @@ async def analyze_command(
     # --------------------------------------------------------
 
     signal_keys = [
-
         "1x",
         "x2",
+        "over05",
         "over15",
         "over25",
         "under35",
+        "under45",
         "btts",
         "home_score",
         "away_score",
     ]
 
     signals = [
-
         (key, markets[key])
-
         for key in signal_keys
     ]
 
     signals.sort(
-
         key=lambda item: item[1],
-
         reverse=True
     )
 
-    # --------------------------------------------------------
-    # SCORELINES
-    # --------------------------------------------------------
-
-    scorelines = top_scorelines(
-
-        home_xg,
-
-        away_xg,
-
-        count=5
-    )
-
-    # --------------------------------------------------------
-    # PRIMARY SIGNAL
-    #
-    # Avoid selecting a marginal signal when it is only
-    # slightly above the next one.
-    # --------------------------------------------------------
-
     top_signal = signals[0]
-
     second_signal = signals[1]
 
     signal_gap = (
@@ -2070,58 +1915,33 @@ async def analyze_command(
         primary_signal = None
 
     # --------------------------------------------------------
-    # MODEL DISAGREEMENT
+    # SCORELINES
     # --------------------------------------------------------
 
-    top_key = top_signal[0]
+    scorelines = top_scorelines(
+        home_xg,
+        away_xg,
+        count=5
+    )
+
+    # --------------------------------------------------------
+    # MODEL QUALITY
+    # --------------------------------------------------------
 
     disagreement = disagreement_level(
-
-        poisson[top_key],
-
-        historical[top_key]
+        poisson[top_signal[0]],
+        historical[top_signal[0]]
     )
 
-    # --------------------------------------------------------
-    # MODEL CONFIDENCE
-    # --------------------------------------------------------
-
-    if primary_signal:
-
-        model_conf = model_confidence(
-
-            primary_signal[1],
-
-            strength,
-
-            disagreement
-        )
-
-    else:
-
-        model_conf = model_confidence(
-
-            top_signal[1],
-
-            strength,
-
-            disagreement
-        )
-
-    confidence_text = confidence_label(
-        model_conf
+    model_conf = model_confidence(
+        top_signal[1],
+        strength,
+        disagreement
     )
-
-    # --------------------------------------------------------
-    # RESULT CONFLICT
-    # --------------------------------------------------------
 
     result_conflict = (
-
         markets["1x"] >= 62
-
         and markets["x2"] >= 62
-
         and abs(
             markets["1x"]
             - markets["x2"]
@@ -2129,137 +1949,375 @@ async def analyze_command(
     )
 
     # --------------------------------------------------------
-    # BUILD OUTPUT
+    # OUTPUT
     # --------------------------------------------------------
 
     lines = [
-
         f"⚽ GOALLOGIC AI v{VERSION}",
-
         "",
-
         f"🏟️ {team_name(home_team)} vs "
         f"{team_name(away_team)}",
-
         "",
-
         f"Season: {SEASON}",
-
         f"Sample: Last "
         f"{min(len(home_recent), len(away_recent))} "
         "available matches",
-
         "",
     ]
 
-    # --------------------------------------------------------
-    # HOME RECENT
-    # --------------------------------------------------------
+    # HOME FORM
 
     lines.append(
-
         f"🏠 {team_name(home_team)} recent:"
     )
 
     lines.append(
-
         f"{result_string(home_recent)} | "
-
         f"W/D/L "
         f"{home_stats['wins']}/"
         f"{home_stats['draws']}/"
         f"{home_stats['losses']} | "
-
         f"GF{home_stats['gf']} "
         f"GA{home_stats['ga']}"
     )
 
     lines.append(
-
         f"Avg "
         f"{home_stats['avg_gf']:.2f}/"
         f"{home_stats['avg_ga']:.2f} | "
-
         f"O1.5 "
         f"{home_stats['over15']:.0f}% | "
-
         f"O2.5 "
         f"{home_stats['over25']:.0f}% | "
-
         f"U3.5 "
         f"{home_stats['under35']:.0f}% | "
-
         f"BTTS "
         f"{home_stats['btts']:.0f}%"
     )
 
     lines.append(
-
         f"Scoring "
         f"{home_stats['scoring']:.0f}% | "
-
         f"CS "
         f"{home_stats['clean_sheet']:.0f}%"
     )
 
     lines.append("")
 
-    # --------------------------------------------------------
-    # AWAY RECENT
-    # --------------------------------------------------------
+    # AWAY FORM
 
     lines.append(
-
         f"✈️ {team_name(away_team)} recent:"
     )
 
     lines.append(
-
         f"{result_string(away_recent)} | "
-
         f"W/D/L "
         f"{away_stats['wins']}/"
         f"{away_stats['draws']}/"
         f"{away_stats['losses']} | "
-
         f"GF{away_stats['gf']} "
         f"GA{away_stats['ga']}"
     )
 
     lines.append(
-
         f"Avg "
         f"{away_stats['avg_gf']:.2f}/"
         f"{away_stats['avg_ga']:.2f} | "
-
         f"O1.5 "
         f"{away_stats['over15']:.0f}% | "
-
         f"O2.5 "
         f"{away_stats['over25']:.0f}% | "
-
         f"U3.5 "
         f"{away_stats['under35']:.0f}% | "
-
         f"BTTS "
         f"{away_stats['btts']:.0f}%"
     )
 
     lines.append(
-
         f"Scoring "
         f"{away_stats['scoring']:.0f}% | "
-
         f"CS "
         f"{away_stats['clean_sheet']:.0f}%"
     )
 
     lines.append("")
 
-    # --------------------------------------------------------
     # VENUE
-    # --------------------------------------------------------
 
     lines.append(
+        f"🏟️ {team_name(home_team)} HOME:"
+    )
 
-        f"🏠 {team_name(home_team)} HOME:
+    if home_venue["games"] > 0:
+
+        lines.append(
+            f"{home_venue['games']} games | "
+            f"W/D/L "
+            f"{home_venue['wins']}/"
+            f"{home_venue['draws']}/"
+            f"{home_venue['losses']} | "
+            f"Avg "
+            f"{home_venue['avg_gf']:.2f}/"
+            f"{home_venue['avg_ga']:.2f}"
+        )
+
+        lines.append(
+            f"Scoring "
+            f"{home_venue['scoring']:.0f}% | "
+            f"CS "
+            f"{home_venue['clean_sheet']:.0f}%"
+        )
+
+    else:
+
+        lines.append(
+            "No home matches in current sample."
+        )
+
+    lines.append("")
+
+    lines.append(
+        f"✈️ {team_name(away_team)} AWAY:"
+    )
+
+    if away_venue["games"] > 0:
+
+        lines.append(
+            f"{away_venue['games']} games | "
+            f"W/D/L "
+            f"{away_venue['wins']}/"
+            f"{away_venue['draws']}/"
+            f"{away_venue['losses']} | "
+            f"Avg "
+            f"{away_venue['avg_gf']:.2f}/"
+            f"{away_venue['avg_ga']:.2f}"
+        )
+
+        lines.append(
+            f"Scoring "
+            f"{away_venue['scoring']:.0f}% | "
+            f"CS "
+            f"{away_venue['clean_sheet']:.0f}%"
+        )
+
+    else:
+
+        lines.append(
+            "No away matches in current sample."
+        )
+
+    lines.append("")
+
+    # XG
+
+    lines.append("📊 EXPECTED GOALS MODEL")
+
+    lines.append(
+        f"{team_name(home_team)}: "
+        f"{home_xg:.2f} xG"
+    )
+
+    lines.append(
+        f"{team_name(away_team)}: "
+        f"{away_xg:.2f} xG"
+    )
+
+    lines.append(
+        f"Total: {total_xg:.2f} xG"
+    )
+
+    lines.append("")
+
+    # RESULT MODEL
+
+    lines.append("🎯 RESULT MODEL")
+
+    lines.append(
+        f"1: {markets['home_win']:.0f}%"
+        f" | X: {markets['draw']:.0f}%"
+        f" | 2: {markets['away_win']:.0f}%"
+    )
+
+    lines.append("")
+
+    # MARKET MODEL
+
+    lines.append("📈 MARKET MODEL")
+
+    display_keys = [
+        "1x",
+        "x2",
+        "over05",
+        "over15",
+        "over25",
+        "under35",
+        "under45",
+        "btts",
+        "home_score",
+        "away_score",
+    ]
+
+    for key in display_keys:
+
+        lines.append(
+            f"{market_label(key)}: "
+            f"{markets[key]:.0f}%"
+        )
+
+    lines.append("")
+
+    # SCORELINES
+
+    lines.append("🥅 TOP SCORELINES")
+
+    for (home_goals, away_goals), probability in scorelines[:3]:
+
+        lines.append(
+            f"{home_goals}-{away_goals}: "
+            f"{probability * 100:.0f}%"
+        )
+
+    lines.append("")
+
+    # TOP SIGNALS
+
+    lines.append("🔥 TOP MODEL SIGNALS")
+
+    for key, value in signals[:3]:
+
+        lines.append(
+            f"{confidence_icon(value)} "
+            f"{market_label(key)} "
+            f"{value:.0f}%"
+        )
+
+    lines.append("")
+
+    # MODEL QUALITY
+
+    lines.append("🧠 MODEL QUALITY")
+
+    lines.append(
+        f"Data strength: "
+        f"{strength * 100:.0f}%"
+    )
+
+    lines.append(
+        f"Top-signal disagreement: "
+        f"{disagreement}"
+    )
+
+    lines.append(
+        f"Model confidence: "
+        f"{confidence_icon(model_conf)} "
+        f"{model_conf:.0f}% "
+        f"({confidence_label(model_conf)})"
+    )
+
+    if result_conflict:
+
+        lines.append(
+            "⚠️ 1X and X2 are both elevated; "
+            "the result market is not clearly separated."
+        )
+
+    if primary_signal:
+
+        lines.append("")
+
+        lines.append(
+            f"📌 PRIMARY MODEL SIGNAL: "
+            f"{market_label(primary_signal[0])} "
+            f"{primary_signal[1]:.0f}%"
+        )
+
+    else:
+
+        lines.append("")
+
+        lines.append(
+            "📌 PRIMARY MODEL SIGNAL: "
+            "No clear separation."
+        )
+
+    lines.append("")
+
+    lines.append(
+        "ℹ️ Probabilities are model estimates "
+        "from recent 2026/27 data, venue evidence "
+        "and a Poisson score model. They are not guarantees."
+    )
+
+    await update.message.reply_text(
+        "\n".join(lines)
+    )
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    if not TELEGRAM_BOT_TOKEN:
+
+        raise RuntimeError(
+            "TELEGRAM_BOT_TOKEN is missing."
+        )
+
+    start_health_server()
+
+    print(
+        f"GoalLogic AI v{VERSION} "
+        "Telegram bot is starting..."
+    )
+
+    application = (
+        Application.builder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .build()
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "start",
+            start_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "apitest",
+            apitest_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "team",
+            team_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "fixtures",
+            fixtures_command
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "analyze",
+            analyze_command
+        )
+    )
+
+    application.run_polling(
+        drop_pending_updates=True
+    )
+
+
+if __name__ == "__main__":
+    main()
