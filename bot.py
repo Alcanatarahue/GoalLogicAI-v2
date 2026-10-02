@@ -20,8 +20,8 @@ Weighted Evidence + Best 3 Signals Upgrade
 
 ============================================================
 
-TELEGRAM_BOT_TOKEN = os.getenv(“TELEGRAM_BOT_TOKEN”)
-OPENFOOT_API_KEY = os.getenv(“OPENFOOT_API_KEY”)
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+OPENFOOT_API_KEY = os.getenv("OPENFOOT_API_KEY")
 
 OPENFOOT_BASE = “https://openfootapi.com”
 
