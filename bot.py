@@ -75,25 +75,24 @@ def openfoot_get(endpoint, params=None):
 
 def search_team(team_name):
     data = openfoot_get(
-        "/v1/teams",
-        params={"search": team_name}
+        "/v1/search",
+        params={"q": team_name}
     )
 
-    teams = data.get("data", [])
+    results = data.get("data", [])
 
-    if not teams:
+    if not results:
         return None
 
     wanted = team_name.lower().strip()
 
-    for team in teams:
-        name = str(team.get("name", "")).lower()
+    for item in results:
+        name = str(item.get("name", "")).lower()
 
         if name == wanted:
-            return team
+            return item
 
-    return teams[0]
-
+    return results[0]
 
 # ============================================================
 # MATCH PARSER
